@@ -71,7 +71,9 @@ param(
     [switch]$Lite,
     [switch]$WithDev,
     [switch]$NoPush,
-    [switch]$NoProxy,
+    [string]$Proxy = "",                                  # 要走代理时显式给，如 http://127.0.0.1:7890
+    [string]$GithubIp = "",                               # github.com 走指定 IP（绕开被墙/半死的 IP）
+    [switch]$NoProxy,                                     # 兼容旧命令（默认已经就是直连）
     [switch]$NoCreate,                                    # 不存在时**不**自动建仓，只报告
     [switch]$Private,                                     # 自动建仓时建成私有仓库（默认公开）
     [string]$Description = "",
@@ -106,15 +108,54 @@ if (-not $doGithub -and -not $doGitee) { Write-Err2 "没有可发布的远端"; 
 #    ① git config http.<url>.proxy   ② git config http.proxy
 #    ③ 环境变量 HTTP_PROXY / HTTPS_PROXY / ALL_PROXY
 # ============================================================
+# ============================================================
+#  git 代理：**默认直连，并且显式清空**
+# ============================================================
+# ★★★ 2026-11-06 实测踩坑（用户报"始终发布不成功"）：
+#   `git config --global` 里留着 `http.https://github.com.proxy = http://127.0.0.1:33210`，
+#   而那个端口早就没了（代理每次重启换端口）。**git 的配置优先级高于环境变量**，
+#   所以无论脚本怎么"不传代理"，push 都会去撞那个死端口；
+#   而当时脚本把 git 的 stderr 用 Out-Null 丢了，只剩一句猜出来的"远端历史不一致"。
+#   ⇒ 结论：**不给值 ≠ 用默认**，不给值 = 沿用那条坏配置。这里必须显式给。
+#   同理，环境变量里的 HTTP_PROXY 是工具进程注入的，不该被发布脚本继承。
+# [EN] Git's own config beats environment variables. A stale `http.https://github.com.proxy`
+# [EN] pointing at a dead port makes every push fail while the script reports a made-up reason.
+# [EN] "Not passing a proxy" is NOT "no proxy" -- always pass an explicit value.
 $GitProxyArgs = @()
-if ($NoProxy) {
+if ($Proxy -ne "") {
+    $GitProxyArgs = @('-c', "http.proxy=$Proxy", '-c', "https.proxy=$Proxy",
+                      '-c', "http.https://github.com.proxy=$Proxy",
+                      '-c', "http.https://gitee.com.proxy=$Proxy")
+    Write-Ok "git 代理：$Proxy（-Proxy 指定）"
+} else {
     $GitProxyArgs = @('-c', 'http.proxy=', '-c', 'https.proxy=',
-                      '-c', 'http.https://github.com.proxy=', '-c', 'http.https://gitee.com.proxy=')
+                      '-c', 'http.https://github.com.proxy=',
+                      '-c', 'http.https://gitee.com.proxy=')
+    Write-Ok "git 代理：直连（已覆盖 git 全局配置）"
+}
+# 直连时连环境变量一起清 —— 那些是编辑器 / 工具进程注入的，不是用户的系统代理。
+# 只在 -Proxy 显式给定时保留（那时由 -c 参数控制，环境变量无所谓）。
+if ($Proxy -eq "") {
     foreach ($pv in @('HTTP_PROXY','HTTPS_PROXY','http_proxy','https_proxy','ALL_PROXY','all_proxy')) {
         Set-Item -Path "Env:$pv" -Value "" -ErrorAction SilentlyContinue
     }
     [System.Net.WebRequest]::DefaultWebProxy = $null
-    Write-Ok "-NoProxy：本次直连 GitHub/Gitee"
+    if ($NoProxy) { Write-Gray "-NoProxy：同默认行为（直连），API 也不走代理" }
+}
+
+# ★★★ 2026-11-06 实测：这台机器 `hosts` 里写着 `140.82.112.3 github.com`，
+#   而那个 IP 现在是**半死**的（TCP 握手能过、TLS 一读就断）⇒ git 卡 21 秒后报
+#   "Failed to connect"，看起来像"没网"。同一时刻 `20.27.177.113`（日本）6 秒就返回 200。
+#   `hosts` 需要管理员才能改，所以这里给一条不改系统就能绕过去的路：
+#   git 2.47+ 支持 `http.curloptResolve`，直接把域名钉到某个 IP。
+#   优先级高于 hosts 和 DNS（实测有效）。
+# [EN] A half-dead `hosts` entry (TCP connects, TLS hangs up) makes git look offline.
+# [EN] `-GithubIp` pins the domain to a working IP via `http.curloptResolve` (git 2.47+),
+# [EN] which beats both hosts and DNS -- no admin rights, no system change.
+if ($GithubIp -ne "") {
+    $GitProxyArgs += @('-c', "http.curloptResolve=github.com:443:$GithubIp",
+                       '-c', "http.curloptResolve=api.github.com:443:$GithubIp")
+    Write-Ok "GitHub 固定走 $GithubIp（curloptResolve，优先于 hosts / DNS）"
 }
 
 # ============================================================
@@ -591,6 +632,18 @@ function Commit-Tree([string]$dir, [string]$label) {
     }
 }
 
+#: 把 git 的输出整理成能给用户看的文本：抹掉令牌、压掉空行。
+#: 之前这里直接 `2>&1 | Out-Null`，于是"连不上远端"被当成"历史不一致"，
+#: 用户看到的永远是猜出来的原因，真正的 fatal 那行一个字都没留下。
+# [EN] Turn git's output into something safe to print: strip the token, drop blank lines.
+function Hide-Secret([string]$text, [string]$secret) {
+    if ([string]::IsNullOrWhiteSpace($text)) { return '' }
+    if (-not [string]::IsNullOrEmpty($secret)) { $text = $text.Replace($secret, '***') }
+    $text = [regex]::Replace($text, '(https://[^:/@\s]+:)[^@\s]+@', '$1***@')
+    $lines = @($text -split "`r?`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' })
+    return ($lines -join "`n")
+}
+
 function Push-Tree([string]$dir, [string]$url, [string]$tk, [string]$user, [string]$label, [string]$kind) {
     Write-Step "Phase 5: push → $label"
     $prevEap = $ErrorActionPreference
@@ -607,28 +660,60 @@ function Push-Tree([string]$dir, [string]$url, [string]$tk, [string]$user, [stri
         }
         $cred = @('-c', 'credential.helper=')
 
-        git @GitProxyArgs @cred push $authed "HEAD:refs/heads/$Branch" 2>&1 | Out-Null
-        if ($LASTEXITCODE -ne 0) {
-            Write-Warn2 "$label 普通 push 被拒（远端历史不一致），按远端 tip 强制覆盖"
-            $tipLine = git @GitProxyArgs @cred ls-remote $authed "refs/heads/$Branch" 2>$null | Select-Object -First 1
-            $tip = ($tipLine -split '\s+')[0]
+        $raw = @(git @GitProxyArgs @cred push $authed "HEAD:refs/heads/$Branch" 2>&1)
+        $rc = $LASTEXITCODE
+        $msg = Hide-Secret (($raw | ForEach-Object { "$_" }) -join "`n") $tk
+
+        # ★★★ 只有**真的**历史不一致才去 force。
+        #   以前是"只要退出码非 0 就当成历史不一致"，于是网络断了也去
+        #   "按远端 tip 强制覆盖"，再失败时报一个更离谱的错 —— 用户看到的现象
+        #   就是"永远被拒、永远发布不成功"，而真正原因（连不上）一次都没露过面。
+        $realReject = $rc -ne 0 -and
+                      ($msg -match 'non-fast-forward|fetch first|\[rejected\]|updates were rejected')
+        if ($realReject) {
+            Write-Warn2 "$label 远端有本机没有的提交，按远端 tip 强制覆盖"
+            $tipLine = @(git @GitProxyArgs @cred ls-remote $authed "refs/heads/$Branch" 2>&1) | Select-Object -First 1
+            $tip = ("$tipLine" -split '\s+')[0]
             if ($tip) {
-                git @GitProxyArgs @cred push $authed "HEAD:refs/heads/$Branch" "--force-with-lease=refs/heads/$Branch`:$tip" 2>&1 | Out-Null
+                $raw = @(git @GitProxyArgs @cred push $authed "HEAD:refs/heads/$Branch" "--force-with-lease=refs/heads/$Branch`:$tip" 2>&1)
             } else {
-                git @GitProxyArgs @cred push $authed "HEAD:refs/heads/$Branch" --force 2>&1 | Out-Null
+                $raw = @(git @GitProxyArgs @cred push $authed "HEAD:refs/heads/$Branch" --force 2>&1)
             }
+            $rc = $LASTEXITCODE
+            $msg = Hide-Secret (($raw | ForEach-Object { "$_" }) -join "`n") $tk
         }
-        if ($LASTEXITCODE -eq 0) {
+        if ($rc -eq 0) {
             Write-Ok "$label push 成功（$Branch）"
             return $true
         }
+
+        # ── 失败：先按**真实错误**分类，再给对应的话 ─────────────────
         Write-Err2 "$label push 失败"
-        if ($kind -eq 'github') {
-            Write-Gray "检查：token 是否有 repo 写权限 / 仓库是否已存在 / 网络"
+        Write-Gray "git 的原话（令牌已抹掉）："
+        foreach ($l in ($msg -split "`n")) { Write-Gray "    $l" }
+
+        if ($msg -match 'Could not connect|Failed to connect|unable to access|Connection refused|timed out|schannel|OpenSSL|SSL_') {
+            Write-Warn2 "↑ 这是**连不上远端**，不是权限问题，重输令牌也没用。"
+            if ($kind -eq 'github') {
+                Write-Gray "  · github.com 解析到的 IP 可能被墙，或 hosts 里那条已经失效；"
+                Write-Gray "  · 换一个能用的 IP：-GithubIp 20.27.177.113（实测可用，优先于 hosts / DNS）"
+            } else {
+                Write-Gray "  · 本脚本已按直连跑（会覆盖 git 全局里残留的代理配置）；"
+                Write-Gray "  · 确实要走代理：-Proxy http://127.0.0.1:端口"
+            }
+        } elseif ($msg -match 'Authentication failed|authentication|Permission denied|403|401|Invalid username') {
+            Write-Warn2 "↑ 这是**凭据被拒**。"
+            if ($kind -eq 'github') {
+                Write-Gray "  · token 要有 repo 写权限：https://github.com/settings/tokens"
+            } else {
+                Write-Gray "  · 令牌要勾 projects 读写，且必须是**私人令牌**（不是登录密码）"
+                Write-Gray "  · 换过令牌：加 -ResetGiteeCred 重跑，或 -GiteeToken `"<新令牌>`""
+            }
+        } elseif ($msg -match 'not found|404|does not appear to be a git repository') {
+            Write-Warn2 "↑ 远端说**找不到这个仓库**：可能还没建好，或这个 token 看不到它。"
         } else {
-            Write-Gray "检查：令牌是否有 projects 读写权限 / 仓库是否存在 / 网络"
+            Write-Gray "若不确定：以上面 git 的原话为准，别猜。"
         }
-        Write-Gray "若代理没起：加 -NoProxy 重试"
         return $false
     } finally {
         Pop-Location
@@ -662,9 +747,15 @@ function Push-Tag([string]$dir, [string]$url, [string]$tk, [string]$user, [strin
             else { Write-Err2 "$label tag '$tag' 已存在且指向别的提交 —— 换一个 tag，或先删旧 tag" }
         }
         if ($ready) {
-            git @GitProxyArgs -c credential.helper= push $authed $tag 2>&1 | Out-Null
-            if ($LASTEXITCODE -eq 0) { Write-Ok "$label tag 已推：$tag" }
-            else { Write-Warn2 "$label tag 推送失败（可能已存在）" }
+            $traw = @(git @GitProxyArgs -c credential.helper= push $authed $tag 2>&1)
+            if ($LASTEXITCODE -eq 0) {
+                Write-Ok "$label tag 已推：$tag"
+            } else {
+                Write-Warn2 "$label tag 推送失败（tag 已存在，或推送被拒）"
+                # 同样不许吞：tag 失败可能连带 Release 建不出来，而原因只有这行能说清
+                $tmsg = Hide-Secret (($traw | ForEach-Object { "$_" }) -join "`n") $tk
+                foreach ($l in ($tmsg -split "`n" | Select-Object -First 4)) { Write-Gray "    $l" }
+            }
         }
     } finally {
         Pop-Location

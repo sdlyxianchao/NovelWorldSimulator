@@ -97,6 +97,8 @@ cd <工程根目录>          # 就是含 config.py / gui / sim 的那一层
 | `-GiteeOnly` | **只**推 Gitee |
 | `-GiteeToken` / `-GiteeUser` | 直接给 Gitee 令牌（不给则用已保存凭据 / 弹框） |
 | `-ResetGiteeCred` | 丢掉本机保存的 Gitee 凭据，本次重新询问（令牌输错时用） |
+| `-GithubIp` | 把 `github.com` 钉到指定 IP（走 `http.curloptResolve`，优先于 hosts / DNS）。IP 被墙或 hosts 里那条半死时用，不改系统文件 |
+| `-Proxy` | 走代理，如 `http://127.0.0.1:7890`。**默认直连**，并且会覆盖 git 全局配置里残留的代理 |
 | `-Version` | tag 名，如 `v0.3.4`。**留空则不打 tag、不建 Release**（只推代码）。带不带 `v` 都行（`0.3.4` 的 tag 就是 `0.3.4`）；与 `config.VERSION` 不一致**只警告、不拦**（版本号只由你定） |
 | `-ReleaseNotes` | tag 正文 + Release 说明 |
 | `-CommitMessage` | 提交信息，默认 `update: sync latest source`。两边各用同一句；工作区**无变更时不提交**（不会造空 commit） |
@@ -200,8 +202,10 @@ README 里写着"双击这个"，排掉它们等于让人双击一个不存在�
 
 | 现象 | 原因 / 处理 |
 |---|---|
-| `Failed to connect to 127.0.0.1 port xxxxx` | 代理没起。加 `-NoProxy` |
+| `Failed to connect to 127.0.0.1 port xxxxx` | 代理没起。本脚本默认直连；要代理用 `-Proxy` |
 | `GitHub 仓库不存在` + `自动建仓需要 GitHub PAT` | 没给 `-Token`，不能建仓。补上，或先手动建 |
+| `Failed to connect to github.com:443` | `github.com` 解析到的 IP 被墙，或 hosts 里那条已失效。加 `-GithubIp 20.27.177.113`（实测可用） |
+| push 报 `Incorrect username or password (access token)` | Gitee 网络是通的，**令牌不对**（输错 / 用了登录密码 / 没勾 projects）。`-ResetGiteeCred` 重输 |
 | 建 Gitee 仓库 403 | 令牌没勾 `projects` 读写 |
 | `push 被拒（历史不一致）` | 脚本自动 `force-with-lease` 重试；仍失败说明远端有新提交，先人工看一眼 |
 | Gitee 仓库建失败 `401` | **令牌本身不对**（输错 / 过期 / 已删）。脚本会**自动作废**已存的凭据并提示 → 重跑重输；想跳过弹框用 `-GiteeUser sdxianchao -GiteeToken "<新令牌>"` |
