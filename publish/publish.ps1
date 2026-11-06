@@ -121,16 +121,18 @@ if (-not $doGithub -and -not $doGitee) { Write-Err2 "没有可发布的远端"; 
 # [EN] Git's own config beats environment variables. A stale `http.https://github.com.proxy`
 # [EN] pointing at a dead port makes every push fail while the script reports a made-up reason.
 # [EN] "Not passing a proxy" is NOT "no proxy" -- always pass an explicit value.
-$GitProxyArgs = @()
+# 变量放的是**所有"全局" -c 参数**（代理 / TLS 后端 / IP 钉扎），不只代理 ——
+# 名字用 $GitArgs，别再叫 Proxy，否则下一个人会以为 TLS 那段跟代理无关。
+$GitArgs = @()
 if ($Proxy -ne "") {
-    $GitProxyArgs = @('-c', "http.proxy=$Proxy", '-c', "https.proxy=$Proxy",
-                      '-c', "http.https://github.com.proxy=$Proxy",
-                      '-c', "http.https://gitee.com.proxy=$Proxy")
+    $GitArgs = @('-c', "http.proxy=$Proxy", '-c', "https.proxy=$Proxy",
+                 '-c', "http.https://github.com.proxy=$Proxy",
+                 '-c', "http.https://gitee.com.proxy=$Proxy")
     Write-Ok "git 代理：$Proxy（-Proxy 指定）"
 } else {
-    $GitProxyArgs = @('-c', 'http.proxy=', '-c', 'https.proxy=',
-                      '-c', 'http.https://github.com.proxy=',
-                      '-c', 'http.https://gitee.com.proxy=')
+    $GitArgs = @('-c', 'http.proxy=', '-c', 'https.proxy=',
+                 '-c', 'http.https://github.com.proxy=',
+                 '-c', 'http.https://gitee.com.proxy=')
     Write-Ok "git 代理：直连（已覆盖 git 全局配置）"
 }
 # 直连时连环境变量一起清 —— 那些是编辑器 / 工具进程注入的，不是用户的系统代理。
@@ -143,18 +145,102 @@ if ($Proxy -eq "") {
     if ($NoProxy) { Write-Gray "-NoProxy：同默认行为（直连），API 也不走代理" }
 }
 
-# ★★★ 2026-11-06 实测：这台机器 `hosts` 里写着 `140.82.112.3 github.com`，
-#   而那个 IP 现在是**半死**的（TCP 握手能过、TLS 一读就断）⇒ git 卡 21 秒后报
-#   "Failed to connect"，看起来像"没网"。同一时刻 `20.27.177.113`（日本）6 秒就返回 200。
-#   `hosts` 需要管理员才能改，所以这里给一条不改系统就能绕过去的路：
-#   git 2.47+ 支持 `http.curloptResolve`，直接把域名钉到某个 IP。
-#   优先级高于 hosts 和 DNS（实测有效）。
-# [EN] A half-dead `hosts` entry (TCP connects, TLS hangs up) makes git look offline.
-# [EN] `-GithubIp` pins the domain to a working IP via `http.curloptResolve` (git 2.47+),
-# [EN] which beats both hosts and DNS -- no admin rights, no system change.
+#: 跑一条**只读**的 git 命令，把 stdout+stderr 收成一段文本 + 退出码。
+#: ⚠ 必须临时把 `$ErrorActionPreference` 放回 Continue：PowerShell 5.1 里 `2>&1` 会把
+#:   原生命令的 stderr 变成 ErrorRecord，而脚本顶部是 `Stop` ⇒ 探测命令会**直接终止整个脚本**
+#:   （实测：DryRun 都跑不完，rc=1，屏幕上只有一句 `NativeCommandError`）。
+#:   这个坑以前只在 Push-Tree 内部绕过，没人发现它是全局的。
+# [EN] Run a read-only git command and capture stdout+stderr plus the exit code.
+# [EN] PS 5.1 turns native stderr into ErrorRecord under `2>&1`; with `$ErrorActionPreference='Stop'`
+# [EN] that **terminates the whole script** -- which is exactly what a probe must never do.
+function Invoke-GitText([string[]]$gargs) {
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $o = @(git @gargs 2>&1)
+        $rc = $LASTEXITCODE
+        return @{ text = (($o | ForEach-Object { "$_" }) -join "`n"); rc = $rc }
+    } finally {
+        $ErrorActionPreference = $prevEap
+    }
+}
+
+# ============================================================
+#  TLS 后端：**系统级**配置可能写着这个 git 根本没编进去的后端
+# ------------------------------------------------------------
+#  ★★★ 2026-11-06 实测（用户报"两个远端都推不上去、永远被拒"）：
+#    git 的原话是 `fatal: Unsupported SSL backend 'openssl'. Supported SSL backends: schannel`
+#    —— 这台机器的 `C:\Program Files\Git\etc\gitconfig`（**系统级**）写着
+#    `http.sslBackend = openssl`，而 `C:\Program Files\Git\cmd\git.exe` 这个构建
+#    只编了 schannel ⇒ **它的每一个 https 操作都废**：clone / pull / push 一个都跑不了。
+#    跟令牌、网络、代理**全都没有关系**，重输令牌和换 IP 都是白费。
+#    更坏的是这条错误被归到了"连不上远端"，于是人被指去换 IP —— 试一晚也不会好。
+#  ⇒ 做法：让 git **自己**报出它支持哪些后端：故意给一个不存在的名字，
+#    它在**联网之前**就失败（实测 54ms、零流量）并列出 `Supported SSL backends: schannel`。
+#    配置里的那个不在列表里，就换成列表里的第一个（命令行的 -c 优先级最高，不用改系统文件）。
+# [EN] A **system-level** `http.sslBackend = openssl` on a schannel-only build breaks *every*
+# [EN] https operation of that git -- nothing to do with tokens, network or proxies. Ask git
+# [EN] which backends it actually has (a bogus name fails before any network I/O) and override
+# [EN] the mismatched value with `-c`, which beats both system and global config.
+function Get-GitSslBackends {
+    $r = Invoke-GitText @('-c', 'http.sslBackend=__probe__', 'ls-remote', 'https://example.invalid/x')
+    if ($r.text -match '(?s)Supported SSL backends:\s*(.+?)\s*$') {
+        return @($Matches[1] -split '\s+' | Where-Object { $_ -ne '' })
+    }
+    return @()
+}
+
+$effSsl = ((Invoke-GitText @('config', '--get', 'http.sslBackend')).text).Trim()
+if ($effSsl -ne '') {
+    $supported = @(Get-GitSslBackends)
+    $using = $effSsl
+    if ($supported.Count -gt 0 -and $supported -notcontains $effSsl) { $using = $supported[0] }
+    # 这一行是给判据看的（纯 ASCII，不怕控制台代码页）：
+    # 判据自己再探一次 backend 列表，比对 using 是否真在 supported 里。
+    Write-Gray "[git-tls] configured=$effSsl supported=$($supported -join ',') using=$using"
+    if ($using -ne $effSsl) {
+        $GitArgs += @('-c', "http.sslBackend=$using")
+        Write-Warn2 "本机 git 配置要 $effSsl，但这个 git 只编了 $($supported -join ' / ')"
+        Write-Gray "  · 本次按 $using 跑；永久修：git config --global http.sslBackend $using"
+    }
+}
+
+#: "连不上"这一类错误的字样。**只放真·网络 / 握手失败**。
+#: `Unsupported SSL backend` 绝不能算进来 —— 那是本机配置错（上面已纠正），
+#: 归到这里就会把人指去"换 IP、重输令牌"，而那两件事一点用都没有。
+$NetFailRe = 'Could not connect|Failed to connect|unable to access|Connection refused|Connection was reset|Recv failure|timed out|SSL_|schannel|Empty reply from server'
+
+# ★★★ 2026-11-06 实测：这台机器 `hosts` 里写着 `20.27.177.113 github.com`，
+#   上午还能用、晚上就 `Recv failure: Connection was reset`；换 `140.82.116.3` 10 秒就通。
+#   ⇒ **不存在"实测可用"的常量 IP**，只有"现试"。下面这份是候选池，不是真理：
+#     GitHub 推失败且没指定 -GithubIp 时，脚本会自己按池子试一遍，用能连的那个重推一次。
+#   `hosts` 需要管理员才能改，所以走 git 2.47+ 的 `http.curloptResolve`（优先于 hosts / DNS）。
+# [EN] A `hosts` entry can be half-dead or dead by tonight. There is no "known good" IP --
+# [EN] only "try now". This is a candidate pool; on a failed push the script probes it and
+# [EN] retries once with whatever answers, pinned via `http.curloptResolve`.
+$GithubIpCandidates = @('140.82.116.3', '20.27.177.113', '20.200.245.247', '4.237.22.38', '140.82.112.3')
+
+function Get-GithubPinArgs([string]$ip) {
+    return @('-c', "http.curloptResolve=github.com:443:$ip",
+             '-c', "http.curloptResolve=api.github.com:443:$ip")
+}
+
+#: 逐个候选 IP 试一次 ls-remote，返回第一个"不是连不上"的。
+#: 判"通"用**否定**（不是网络类错误就算通）：仓库还没建 / 需要认证时 git 也会非 0 退出，
+#: 但那说明 TLS 已经握手成功、域名已经通了，正是我们要测的东西。
+function Find-GithubIp {
+    foreach ($ip in $GithubIpCandidates) {
+        $pin = @(Get-GithubPinArgs $ip)
+        $r = Invoke-GitText ($GitArgs + $pin + @('-c', 'credential.helper=',
+                                                'ls-remote', '--heads', $RepoUrl))
+        if ($r.text -notmatch $NetFailRe) { return $ip }
+        Write-Gray "  · $ip 不通"
+    }
+    return ''
+}
+
 if ($GithubIp -ne "") {
-    $GitProxyArgs += @('-c', "http.curloptResolve=github.com:443:$GithubIp",
-                       '-c', "http.curloptResolve=api.github.com:443:$GithubIp")
+    $GitArgs += @(Get-GithubPinArgs $GithubIp)
     Write-Ok "GitHub 固定走 $GithubIp（curloptResolve，优先于 hosts / DNS）"
 }
 
@@ -644,6 +730,39 @@ function Hide-Secret([string]$text, [string]$secret) {
     return ($lines -join "`n")
 }
 
+#: 一次 push 尝试（内含"**只有真被拒**才 force"的第二次尝试）。返回 @{ ok; msg }。
+#: 抽成函数是因为"换一个 IP 再推一次"要用同一套逻辑 —— **同一件事不许两处实现**，
+#: 否则 force 的判据迟早只长在一条路上。
+function Invoke-Push([string]$authed, [string[]]$extra, [string]$tk) {
+    $cred = @('-c', 'credential.helper=')
+    $r = Invoke-GitText ($GitArgs + @($extra) + $cred + @('push', $authed, "HEAD:refs/heads/$Branch"))
+    $msg = Hide-Secret $r.text $tk
+
+    # ★★★ 只有**真的**历史不一致才去 force。
+    #   以前是"只要退出码非 0 就当成历史不一致"，于是网络断了也去
+    #   "按远端 tip 强制覆盖"，再失败时报一个更离谱的错 —— 用户看到的现象
+    #   就是"永远被拒、永远发布不成功"，而真正原因（连不上）一次都没露过面。
+    $realReject = $r.rc -ne 0 -and
+                  ($msg -match 'non-fast-forward|fetch first|\[rejected\]|updates were rejected')
+    if ($realReject) {
+        Write-Warn2 "远端有本机没有的提交，按远端 tip 强制覆盖"
+        $tipLine = @(Invoke-GitText ($GitArgs + @($extra) + $cred +
+                                     @('ls-remote', $authed, "refs/heads/$Branch")).text -split "`n") |
+                   Select-Object -First 1
+        $tip = ("$tipLine" -split '\s+')[0]
+        if ($tip) {
+            $r = Invoke-GitText ($GitArgs + @($extra) + $cred +
+                                 @('push', $authed, "HEAD:refs/heads/$Branch",
+                                   "--force-with-lease=refs/heads/$Branch`:$tip"))
+        } else {
+            $r = Invoke-GitText ($GitArgs + @($extra) + $cred +
+                                 @('push', $authed, "HEAD:refs/heads/$Branch", '--force'))
+        }
+        $msg = Hide-Secret $r.text $tk
+    }
+    return @{ ok = ($r.rc -eq 0); msg = $msg }
+}
+
 function Push-Tree([string]$dir, [string]$url, [string]$tk, [string]$user, [string]$label, [string]$kind) {
     Write-Step "Phase 5: push → $label"
     $prevEap = $ErrorActionPreference
@@ -658,31 +777,28 @@ function Push-Tree([string]$dir, [string]$url, [string]$tk, [string]$user, [stri
         } else {
             $authed = $url -replace '^https://', "https://${user}:$tk@"
         }
-        $cred = @('-c', 'credential.helper=')
 
-        $raw = @(git @GitProxyArgs @cred push $authed "HEAD:refs/heads/$Branch" 2>&1)
-        $rc = $LASTEXITCODE
-        $msg = Hide-Secret (($raw | ForEach-Object { "$_" }) -join "`n") $tk
+        $r = Invoke-Push $authed @() $tk
 
-        # ★★★ 只有**真的**历史不一致才去 force。
-        #   以前是"只要退出码非 0 就当成历史不一致"，于是网络断了也去
-        #   "按远端 tip 强制覆盖"，再失败时报一个更离谱的错 —— 用户看到的现象
-        #   就是"永远被拒、永远发布不成功"，而真正原因（连不上）一次都没露过面。
-        $realReject = $rc -ne 0 -and
-                      ($msg -match 'non-fast-forward|fetch first|\[rejected\]|updates were rejected')
-        if ($realReject) {
-            Write-Warn2 "$label 远端有本机没有的提交，按远端 tip 强制覆盖"
-            $tipLine = @(git @GitProxyArgs @cred ls-remote $authed "refs/heads/$Branch" 2>&1) | Select-Object -First 1
-            $tip = ("$tipLine" -split '\s+')[0]
-            if ($tip) {
-                $raw = @(git @GitProxyArgs @cred push $authed "HEAD:refs/heads/$Branch" "--force-with-lease=refs/heads/$Branch`:$tip" 2>&1)
+        # ── GitHub 的 IP 是**每天都会变**的：没指定 -GithubIp 时现场试一遍候选池 ──
+        if (-not $r.ok -and $kind -eq 'github' -and $GithubIp -eq '' -and $r.msg -match $NetFailRe) {
+            Write-Gray "github.com 这个 IP 又断了（这台机器上它一天能变几回），现场试一遍候选："
+            $ip = Find-GithubIp
+            if ($ip) {
+                # 钉进 $GitArgs，而不是只给这一次 push —— tag 推送走同一个域名，
+                # 只喂给 push 等于让 tag 再去撞那个死 IP。
+                # ⚠ 必须写 `$script:` —— 函数里的 `$x +=` 是**赋值**，会在函数内新建一个
+                #   同名局部变量，脚本级那份一动不动（现象：push 用了新 IP、tag 还是撞旧的）。
+                $script:GitArgs += @(Get-GithubPinArgs $ip)
+                Write-Ok "本轮能连的是 $ip —— 用它重推一次（想写死：-GithubIp $ip）"
+                $r = Invoke-Push $authed @() $tk
             } else {
-                $raw = @(git @GitProxyArgs @cred push $authed "HEAD:refs/heads/$Branch" --force 2>&1)
+                Write-Warn2 "候选池里一个都连不上；稍后再试，或用 -Proxy 走代理"
             }
-            $rc = $LASTEXITCODE
-            $msg = Hide-Secret (($raw | ForEach-Object { "$_" }) -join "`n") $tk
         }
-        if ($rc -eq 0) {
+
+        $msg = $r.msg
+        if ($r.ok) {
             Write-Ok "$label push 成功（$Branch）"
             return $true
         }
@@ -692,11 +808,15 @@ function Push-Tree([string]$dir, [string]$url, [string]$tk, [string]$user, [stri
         Write-Gray "git 的原话（令牌已抹掉）："
         foreach ($l in ($msg -split "`n")) { Write-Gray "    $l" }
 
-        if ($msg -match 'Could not connect|Failed to connect|unable to access|Connection refused|timed out|schannel|OpenSSL|SSL_') {
+        if ($msg -match 'Unsupported SSL backend') {
+            Write-Warn2 "↑ 这是**本机 git 的 TLS 后端配置错**，不是网络、不是令牌。"
+            Write-Gray "  · 配置里写的后端这个 git 没编进去（例如写 openssl、实际只有 schannel）；"
+            Write-Gray "  · 一键修：git config --global http.sslBackend schannel（或用报错里列出的那个）"
+        } elseif ($msg -match $NetFailRe) {
             Write-Warn2 "↑ 这是**连不上远端**，不是权限问题，重输令牌也没用。"
             if ($kind -eq 'github') {
-                Write-Gray "  · github.com 解析到的 IP 可能被墙，或 hosts 里那条已经失效；"
-                Write-Gray "  · 换一个能用的 IP：-GithubIp 20.27.177.113（实测可用，优先于 hosts / DNS）"
+                Write-Gray "  · hosts 里那条 github.com 很可能已经失效（这台机器上就失效过两次）；"
+                Write-Gray "  · 换一个能用的 IP：-GithubIp 140.82.116.3（候选见脚本里的 `$GithubIpCandidates）"
             } else {
                 Write-Gray "  · 本脚本已按直连跑（会覆盖 git 全局里残留的代理配置）；"
                 Write-Gray "  · 确实要走代理：-Proxy http://127.0.0.1:端口"
@@ -747,7 +867,7 @@ function Push-Tag([string]$dir, [string]$url, [string]$tk, [string]$user, [strin
             else { Write-Err2 "$label tag '$tag' 已存在且指向别的提交 —— 换一个 tag，或先删旧 tag" }
         }
         if ($ready) {
-            $traw = @(git @GitProxyArgs -c credential.helper= push $authed $tag 2>&1)
+            $traw = @(git @GitArgs -c credential.helper= push $authed $tag 2>&1)
             if ($LASTEXITCODE -eq 0) {
                 Write-Ok "$label tag 已推：$tag"
             } else {

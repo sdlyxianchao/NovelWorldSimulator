@@ -39,6 +39,7 @@ C a real -DryRun). Each A assertion maps to a real incident; `-NoPush` actually 
 """
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import subprocess
@@ -56,6 +57,11 @@ BUILD_PS1 = PUB / 'build.ps1'
 RV = PUB / 'readme_variant.py'
 
 CHECKS: list[dict] = []
+
+#: git 可能编进去的 TLS 后端名（curl 支持的那几个）。判据只认这些词，
+#: 免得把 `fatal:` 后面那几行当成"支持的后端"。
+KNOWN_SSL_BACKENDS = {'openssl', 'schannel', 'mbedtls', 'gnutls', 'securetransport',
+                      'rustls', 'wolfssl', 'bearssl', 'amissl'}
 
 
 def ok(name: str, cond: bool, detail: str = '') -> None:
@@ -192,12 +198,85 @@ def a_group() -> None:
        else ('403 分支清掉了凭据（重输一百次也没用）' if a14_bad
              else ('403 分支没提 projects' if seg403 else '找不到 403 分支')))
 
+    # ★★★ TLS 后端失配（2026-11-06 用户实测：两边都推不上去，git 说
+    #   `Unsupported SSL backend 'openssl'. Supported SSL backends: schannel`）
+    #   系统级 `http.sslBackend = openssl` + 只编了 schannel 的 git ⇒ 这台机上的 git
+    #   **每个 https 操作都废**。判据要三件事同时在：
+    #     ① 主动问 git 支持哪些后端（不是猜、不是只读配置）；
+    #     ② 配置里的不在列表里就**换掉并真的用上**（只告警不纠正 = 用户照样推不上去）；
+    #     ③ 打一行 ASCII 标记，让判据能对着真跑输出核账。
+    # [EN] The TLS-backend mismatch: a system-level `openssl` on a schannel-only git breaks
+    # [EN] every https operation. The script must ask git what it supports, actually *use* the
+    # [EN] supported one, and print an ASCII marker so the check can be a real run, not a regex.
+    a15_ok = ('function Get-GitSslBackends' in src
+              and '$using = $supported[0]' in src
+              and """$GitArgs += @('-c', "http.sslBackend=$using")""" in src
+              and '[git-tls]' in src)
+    ok('A15 ★★★ TLS 后端失配要**问 git 自己**支持什么，并**改用**支持的那个',
+       a15_ok,
+       '探测 + 替换 + -c 生效 + 标记' if a15_ok
+       else '缺其中一环（只报错不改 = 照样推不上去）')
+
+    # ★★★ 分类：`Unsupported SSL backend` 必须**先**被认出来，且绝不算"网络不通"。
+    #   上次就是把它（正则里的裸 `OpenSSL`）算成连不上 ⇒ 用户被指去换 IP、重输令牌。
+    # [EN] The backend mismatch must be classified before (and never as) a network failure.
+    m_net = re.search(r"^\$NetFailRe = '(.*)'", src, re.M)
+    net_re = m_net.group(1) if m_net else ''
+    i_ssl_branch = src.find("if ($msg -match 'Unsupported SSL backend')")
+    i_net_branch = src.find('elseif ($msg -match $NetFailRe)')
+    a16_ok = (i_ssl_branch >= 0 and i_net_branch > i_ssl_branch
+              and net_re != '' and 'OpenSSL' not in net_re and 'sslBackend' not in net_re)
+    ok('A16 ★★★ "TLS 后端配错"不许被归成"连不上远端"（否则人只会去换 IP、重输令牌）',
+       a16_ok,
+       '单独分支在前、$NetFailRe 里没有 OpenSSL/sslBackend' if a16_ok
+       else ('$NetFailRe 里混进了 TLS 后端字样' if ('OpenSSL' in net_re or 'sslBackend' in net_re)
+             else '没有单独的 TLS 后端分支，或它排在网络分支之后'))
+
+    # ★★★ IP 候选池 + 自动重试（2026-11-06：文档里写着"实测可用"的 20.27.177.113，
+    #   当晚就成了 `Recv failure: Connection was reset`）⇒ **不存在长期可用的常量 IP**。
+    #   判据要的是"池子 + 真会重试"，不是"某个 IP 写对了"。
+    # [EN] There is no permanently-good IP for github.com here; require a candidate pool and a
+    # [EN] real retry, not one blessed constant.
+    pool = re.search(r'^\$GithubIpCandidates = @\((.*)\)', src, re.M)
+    pool_ips = re.findall(r"'\d+\.\d+\.\d+\.\d+'", pool.group(1)) if pool else []
+    # ⚠ 只查**代码行**：注释里写"不存在'实测可用'的常量 IP"正是这条规矩的说明，
+    #   按全文搜会把自己的说明判成犯规（第一版就这么红的）。
+    code_lines = [l for l in src.splitlines() if not l.strip().startswith('#')]
+    blessed_ip = [l.strip() for l in code_lines if '实测可用' in l]
+    a17_ok = (len(pool_ips) >= 3
+              and '$script:GitArgs += @(Get-GithubPinArgs $ip)' in src
+              and src.count('Find-GithubIp') >= 2
+              and "$GithubIp -eq ''" in src
+              and not blessed_ip)
+    ok('A17 ★★★ GitHub 的 IP 用**候选池 + 失败后自己重试**（写死一个"实测可用"的 IP 隔天就烂）',
+       a17_ok,
+       f'池子 {len(pool_ips)} 个 + 有重试' if a17_ok
+       else (f'池子只有 {len(pool_ips)} 个' if len(pool_ips) < 3
+             else (f'还对用户说某个 IP 实测可用：{blessed_ip[:1]}' if blessed_ip
+                   else '失败后没真正重试（或被函数作用域吞掉）')))
+
 
 # ============================================================
 #  B 组：README 换位（真跑）
 # ============================================================
 ZH_BODY = '# 中文标题\n\n[English](README_EN.md)\n\n正文\n'
 EN_BODY = '# English Title\n\n[中文](README.md)\n\nbody\n'
+
+#: 假 git：只回答两句话 —— `config --get http.sslBackend` 说 openssl，
+#: 带 `__probe__` 的调用报"只支持 schannel"。用来稳定地复现那台机器的失配状态。
+GIT_STUB = (
+    '@echo off\r\n'
+    'set A=%*\r\n'
+    'if "%A:__probe__=%" neq "%A%" goto probe\r\n'
+    'if "%A:sslBackend=%" neq "%A%" goto cfg\r\n'
+    'exit /b 0\r\n'
+    ':probe\r\n'
+    ' echo fatal: Unsupported SSL backend __probe__. Supported SSL backends: schannel 1>&2\r\n'
+    'exit /b 128\r\n'
+    ':cfg\r\n'
+    'echo openssl\r\n'
+    'exit /b 0\r\n'
+)
 
 
 def run_rv(mode: str, d: Path) -> subprocess.CompletedProcess:
@@ -300,6 +379,64 @@ def c_group() -> None:
     ok('C3 ★★★ 计划里写明两个门面（README.zh-CN.md / README.en.md 都要出现）',
        'README.zh-CN.md' in out and 'README.en.md' in out,
        '门面换位是这次改动的核心')
+
+    # ★★★ 真机核账：脚本打的那行 `[git-tls] configured=… supported=… using=…`
+    #   必须**和 git 自己说的**一致 —— 只看源码里"有探测函数"是不够的，
+    #   探测写对了但用错了变量（比如 still 用 $effSsl）源码判据一样绿。
+    #   这里判据自己探一次（同一个"故意给假名字"的桩，54ms、不联网）。
+    # [EN] Real-run reconciliation: the `[git-tls] … using=` the script prints must agree with
+    # [EN] what git itself reports. Having a probe function is not enough -- wiring it to the
+    # [EN] output is the part that breaks.
+    m = re.search(r'\[git-tls\]\s+configured=(\S*)\s+supported=(\S*)\s+using=(\S*)', out)
+    supported_real: list[str] = []
+    if m:
+        ps_git = shutil.which('git')
+        if ps_git:
+            try:
+                pf = subprocess.run([ps_git, '-c', 'http.sslBackend=__probe__',
+                                     'ls-remote', 'https://example.invalid/x'],
+                                    capture_output=True, text=True, encoding='utf-8',
+                                    errors='replace', timeout=60, creationflags=flags)
+                blob = (pf.stdout or '') + (pf.stderr or '')
+                # 只认**已知后端名**：`(?s)` 一把抓会把 fatal 后面那几行（remote helper、
+                # 'https'、aborted、session …）当成"支持的后端"，列表里混进垃圾就永远对不上。
+                mm = re.search(r"Supported SSL backends:[ \t\r\n]*([\w \t,]+)", blob)
+                if mm:
+                    toks = mm.group(1).replace(',', ' ').split()
+                    supported_real = [t for t in toks if t in KNOWN_SSL_BACKENDS]
+            except Exception:                                    # noqa: BLE001
+                supported_real = []
+    using = m.group(3) if m else ''
+    ok('C4 ★★★ 真跑里 `using=` 的那个后端是 git **真的**支持的（源码有探测 ≠ 用对了）',
+       bool(m) and bool(supported_real) and using in supported_real,
+       f'using={using} ｜ git 实际支持={supported_real}' if m
+       else 'DryRun 输出里没有 [git-tls] 标记')
+
+    # ★★★ 这台机器修好之后（全局已是 schannel），"配置错"那条路就再也走不到了 ——
+    #   C4 会变成**永远绿**：今天写的分支对不对，它一句话也证明不了。
+    #   ⇒ 造一个"配置写 openssl、git 只有 schannel"的假 git（只回两句话），
+    #     让这条闸每次都真被走一遍。判据里放桩，不是产品里放开关。
+    # [EN] Once this machine is fixed, the mismatch path is unreachable and C4 becomes vacuous.
+    # [EN] A two-line fake `git` on PATH makes the branch get exercised on every run.
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            (Path(td) / 'git.cmd').write_text(GIT_STUB, encoding='ascii', newline='')
+            env = dict(os.environ)
+            env['PATH'] = td + os.pathsep + env.get('PATH', '')
+            r2 = subprocess.run([ps, '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+                                 '-File', str(PUB_PS1), '-Gitee', '-DryRun'],
+                                capture_output=True, text=True, encoding='utf-8',
+                                errors='replace', timeout=180, creationflags=flags, env=env)
+            out2 = (r2.stdout or '') + (r2.stderr or '')
+            m2 = re.search(r'\[git-tls\]\s+configured=(\S*)\s+supported=(\S*)\s+using=(\S*)', out2)
+            c5_ok = (bool(m2) and m2.group(1) == 'openssl' and m2.group(3) == 'schannel')
+            ok('C5 ★★★ 造一个"配置写 openssl、git 只有 schannel"的环境，脚本必须改用 schannel',
+               c5_ok,
+               f'configured={m2.group(1)} using={m2.group(3)}' if m2
+               else f'没打出 [git-tls]（rc={r2.returncode}）')
+    except Exception as e:                                       # noqa: BLE001
+        ok('C5 ★★★ 造一个"配置写 openssl、git 只有 schannel"的环境，脚本必须改用 schannel',
+           False, repr(e))
 
 
 def main() -> int:
