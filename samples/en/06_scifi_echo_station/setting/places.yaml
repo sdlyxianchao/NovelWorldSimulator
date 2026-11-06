@@ -1,0 +1,35 @@
+# Places in this story (3–5 is enough)
+#
+# 说明 ≤20 chars — usable facts (how many levels, what is here, when it is busy);
+# the program reads it to decide what kinds of people and events fit here.
+#
+# 方位 / 内里 are optional:
+#   · 方位 = where it sits, what it borders (for the overall map)
+#   · 内里 = the rooms/objects inside it (for interior maps)
+# Keys stay Chinese (名称/说明/方位/内里) — the program reads the same keys.
+# Names and descriptions come only from the existing setting documents.
+
+- 名称: Echo Station
+  说明: A relay station in deep space, one keeper at a time
+  方位: A stretch of deep space with nothing much to look at
+  内里: [Main Control Room, Antenna Bay, Living Module, Corridor, Storage Lockers]
+
+- 名称: Main Control Room
+  说明: Where he takes longwave and keeps the log, all day
+  方位: Center of the station, off the corridor
+  内里: [Listening Desk, Log Rack, Tape Rack, Calibration Panel]
+
+- 名称: Antenna Bay
+  说明: The outer ring, where the antenna gains are trimmed
+  方位: The station's outer ring, the antenna past the hatch
+  内里: [Antenna Mount, Gain Panel, Hatch]
+
+- 名称: Living Module
+  说明: Where he eats and sleeps, ten days of supplies
+  方位: The far end, down the corridor from Control
+  内里: [Bunk, Stove, Storage Lockers]
+
+- 名称: Corridor
+  说明: One circuit, three hundred eighty steps, twenty-four lamps
+  方位: Links Control, the antenna bay, the living module
+  内里: [Lamp 17, Hatch]

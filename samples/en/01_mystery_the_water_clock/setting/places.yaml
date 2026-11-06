@@ -1,0 +1,34 @@
+# The few places this story happens in (3~5 is enough)
+#
+# 说明 should stay short and *usable* (what is inside, when it is busy) —
+# the program reads it to judge what kind of guests and events fit here.
+#
+# 方位 / 内里 are the two **optional** fields:
+#   · 方位 = where it sits, what it is next to (for the overview map)
+#   · 内里 = the rooms / courtyards / objects inside (for the indoor map)
+# Leave them out and it still runs.
+#
+# Field names stay in Chinese: the program reads the same set of keys for
+# both the Chinese and the English edition of a story.
+
+- 名称: Clock Room
+  说明: Two scholars, three artisans; the Bureau's least office
+  方位: West side yard of the Astronomical Bureau, beside the water room
+  内里: [main hall, water room, bronze-vessel rack, duty room, back court]
+
+- 名称: Astronomical Bureau
+  说明: Sets the city's hours; few outsiders get in
+  方位: Southwest corner of the imperial city, a whole ward of ground
+
+- 名称: Chongren Ward
+  说明: East of Zhuque Avenue; the tightest night watch
+  方位: East Chang'an, east side of Zhuque Avenue
+
+- 名称: West Market Tea Shed
+  说明: Where news is traded over tea
+  方位: North gate of the West Market, a bowshot from the ward gate
+  内里: [tea shed, back stove, west corner]
+
+- 名称: Pingkang Ward
+  说明: The ward whose night drum ran early
+  方位: East Chang'an

@@ -1,0 +1,31 @@
+# The few places this story happens in (3~5 is enough)
+#
+# 说明 should stay short and *usable* (what is inside, when it is busy) —
+# the program reads it to judge what kind of guests and events fit here.
+#
+# 方位 / 内里 are the two **optional** fields:
+#   · 方位 = where it sits, what it is next to (for the overview map)
+#   · 内里 = the rooms / objects inside (for the indoor map)
+# Leave them out and it still runs.
+#
+# Field names stay in Chinese: the program reads the same set of keys for
+# both the Chinese and the English edition of a story.
+
+- 名称: The Landing
+  说明: Last crossing of the festival leaves here; the everyday crossing too
+  方位: Downriver; the only way between the two banks
+  内里: [stone steps, boat, line, post]
+
+- 名称: The Bend
+  说明: A lantern's broken reflection on the water; the boat slows here
+  方位: One stretch upriver from the landing
+  内里: [the reflection, the water]
+
+- 名称: The Bridge Pier
+  说明: Cuts the lantern's reflection off; the middle is missing
+  方位: Above the bend, where the reflection breaks
+
+- 名称: The Shop
+  说明: Where A Su embroiders lamp flowers; the curtain stays down
+  方位: On the street not far from the landing, facing a water lane
+  内里: [curtain, frame, thread, lamp flowers]

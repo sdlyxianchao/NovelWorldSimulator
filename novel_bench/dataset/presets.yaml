@@ -1,0 +1,40 @@
+# Presets: which cases to run.
+# `smoke`  = 4 cases, ~20 minutes, enough to see whether a change broke something.
+# `taste`  = 4 cases (classic/modern/web/original), ~2 hours, one per flavour.
+# `core`   = 14 cases, ~1.5 hours, the recommended loop after every optimisation.
+# `full`   = all 29 cases, ~3 hours, for a release check.
+smoke:
+  - hlm-01        # 古典 · 群像 · 中段（大量人物同场）
+  - ltxz-01       # 现代 · 开篇（无前情，考验建置）
+  - gm-01         # 网络 · 中段（神秘感与信息差）
+  - pp-01         # 英文 · 开篇（社交场对白）
+#: **四个口味各一**（2026-10-20 加）：同一套尺子横着量四种来路，看它是不是只会写一种。
+#: 选这四个的理由：古典看"多人同场的声音区分"，现代看"留白与克制"，
+#: 网络看"设定压力下的推进"，望江楼看"**作者自定的写作约束**能不能被守住"
+#: （掌柜台词一章不超过十句、每句不超过十二字；阿九不许有对白 —— 这类约束通用模型最容易塌）。
+#: 用法：`run --preset taste --ticks 24`（约 1000–1400 字/篇，四篇两小时上下）。
+# [EN] One case per flavour: classic / modern / web / the project's own original world.
+# [EN] The last one is the real stress test -- it carries per-character writing constraints
+# [EN] (the shopkeeper gets <=10 lines a chapter, each <=12 characters; the mute cook gets none),
+# [EN] which is exactly where general models start lecturing instead of listening.
+taste:
+  - hlm-01        # 传统 · 古典 · 群像
+  - bc-01         # 现代 · 抒情 · 乡土（留白）
+  - zx-01         # 网络 · 仙侠 · 情感爆发
+  - mwl-01        # 原创 · 明清白话志怪（作者级约束最密）
+core:
+  - hlm-01
+  - ltxz-01
+  - gm-01
+  - pp-01
+  - shz-02        # 群像 · 计谋
+  - sg-01         # 心理博弈
+  - hz-01         # 第一人称 · 克制
+  - st-01         # 硬设定
+  - zx-01         # 情感爆发
+  - je-01         # 哥特 · 第一人称
+  - nef-01         # 制度压迫
+  - sx-01         # 推理 · 开篇
+  - ykg-01        # 留白
+  - cien-01       # 叙述语调
+full: []

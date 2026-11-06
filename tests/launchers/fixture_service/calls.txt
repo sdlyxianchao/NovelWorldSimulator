@@ -1,0 +1,2 @@
+{"action": "stop", "argv": ["stop"], "pid": 32348, "at": 1793372054.4356976}
+{"action": "stop", "argv": ["stop"], "pid": 32700, "at": 1793372069.3758001}

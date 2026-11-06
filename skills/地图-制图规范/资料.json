@@ -1,0 +1,23 @@
+{
+  "来源": [
+    "image_gen/scale.py::ROAD_SPEC",
+    "image_gen/scale.py::road_class",
+    "image_gen/scalemap.py::LOT_MIN_AREA",
+    "image_gen/scalemap.py::_clip_seg"
+  ],
+  "三层": {
+    "制图语法": "通用",
+    "要素清单": "按题材",
+    "符号语汇": "轻度定制"
+  },
+  "图层顺序": [
+    "水系",
+    "街区/地面",
+    "建筑体量",
+    "路网",
+    "点符号",
+    "文字",
+    "图例"
+  ],
+  "不编造": "没有高程不画等高线；没有水深不画等深线；没有路网表不编编号"
+}

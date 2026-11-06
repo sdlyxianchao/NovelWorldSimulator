@@ -1,0 +1,30 @@
+# Places where the story happens (3~5 is enough)
+#
+# 说明 (description) <= 20 characters of *usable* information (how many floors,
+# what is inside, when it is busy) — the program uses it to judge what kind of
+# guests and events fit here.
+#
+# 方位 / 内里 are two optional fields:
+#   · 方位 = where it sits, what it borders (used for the overall map)
+#   · 内里 = the rooms / yards / objects inside (used for the interior map)
+# Leaving them out is fine — the program infers from 说明 and the building type.
+# Keys stay in Chinese; the program reads the same key set for every language.
+
+- 名称: 归云山
+  说明: 云溪宗后一座大山，借的是它的形
+  方位: 云溪宗背后，出山要过山口
+  内里: [石阶, 石壁, 溪, 树林]
+
+- 名称: 云溪宗山门
+  说明: 立字据的石桌在这儿，执事守在门口
+  方位: 归云山口下，宗门最外一层
+  内里: [石桌, 石阶, 山门]
+
+- 名称: 归云山口
+  说明: 上下山的一道口子，夜里两边点灯
+  方位: 归云山南麓，下接云溪宗
+  内里: [老树, 灯]
+
+- 名称: 云溪宗
+  说明: 大劫将至的宗门，字据上盖祖师印
+  方位: 归云山前，依山而建

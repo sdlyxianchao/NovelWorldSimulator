@@ -1,0 +1,13 @@
+{
+  "来源": [
+    "image_gen/scalemap.py::build_deck_shapes",
+    "image_gen/scale.py::DECK"
+  ],
+  "要点": [
+    "狭长轮廓",
+    "沿龙骨切舱段",
+    "首尾随船体收尖",
+    "底舱落 B1",
+    "航路图不画政区界"
+  ]
+}

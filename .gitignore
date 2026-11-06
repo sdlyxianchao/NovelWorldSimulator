@@ -1,0 +1,31 @@
+﻿# 由 publish\publish.ps1 生成 —— 这是**发布仓库**的忽略清单
+.venv/
+__pycache__/
+*.py[cod]
+*.log
+*.bak*
+*.bak-bilingual
+*.exitbak
+*~
+*.old-*
+nul
+
+# 用户数据 / 密钥（同步阶段已排除，这里再兜一层）
+.env
+llm_models.json
+usage.db
+usage.db-journal
+llm_cache.db
+.nws_messages.jsonl
+.install_manifest.json
+.bilingual_done.json
+.gitee-cred.enc
+.gitee-user.txt
+
+# 运行期产物
+logs/
+exports/
+assets/screenshots/
+generated-images/
+launchers/dist/
+novel_bench/results/

@@ -1,0 +1,16 @@
+{
+  "来源": [
+    "image_gen/scalemap.py::block_buildings",
+    "image_gen/scalemap.py::_draw_massing",
+    "image_gen/scalemap.py::place_anchors",
+    "image_gen/scale.py::tight_bounds",
+    "image_gen/scale.py::frame_px"
+  ],
+  "三层": {
+    "街区": 0.06,
+    "无名体量": 0.32,
+    "要地": 0.72
+  },
+  "要地占地块": "12%~19%",
+  "取景": "地点实际所占 + 12% 边距 + 水系/院墙"
+}

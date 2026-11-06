@@ -1,0 +1,26 @@
+# The All-Night Bookshop — Places (3~5 is enough)
+#
+# 说明 (≤20 chars): usable facts — how many floors, what is inside, when it is busy.
+# 方位 (≤30 chars): where it sits, what it is next to.
+# 内里 (optional): the rooms / objects inside.
+
+- 名称: The All-Night Bookshop
+  说明: 24-hour secondhand bookshop, custom comes at 3–4 a.m.
+  方位: Corner of the old street, south of the city
+  内里: [收银台, 书架, 最里面那排, 第二格, 鞋柜, 地垫]
+
+- 名称: The Old Street
+  说明: A whole street marked for demolition, shop at its corner
+  方位: South of the city, bookshop on the corner
+
+- 名称: The Third-Floor Window
+  说明: One window on the third floor, dark most nights
+  方位: Across the street, third floor
+
+- 名称: Across the Street
+  说明: Sees the shop door and the third-floor window
+  方位: Facing the bookshop door
+
+- 名称: The Hospital
+  说明: Where Lin Xiaoman works the night shift
+  方位: In the city, a way off from the old street

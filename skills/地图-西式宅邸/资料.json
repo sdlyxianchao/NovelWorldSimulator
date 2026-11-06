@@ -1,0 +1,169 @@
+{
+  "来源": "image_gen/worldstyle.py::ALL[west_manor]",
+  "key": "west_manor",
+  "名": "西式宅邸（主厅＋两翼）",
+  "族": "west",
+  "屋顶": "pitched",
+  "墙线": "double",
+  "路网": "grid",
+  "城际": "administrative",
+  "房间词": [
+    "厅",
+    "室",
+    "房",
+    "间",
+    "廊",
+    "厨",
+    "阁",
+    "室",
+    "hall",
+    "room",
+    "chamber",
+    "kitchen",
+    "study",
+    "library"
+  ],
+  "见天词": [
+    "庭院",
+    "花园",
+    "露台",
+    "阳台",
+    "天井",
+    "courtyard",
+    "garden",
+    "terrace"
+  ],
+  "陈设词": [
+    "柜",
+    "桌",
+    "椅",
+    "床",
+    "架",
+    "炉",
+    "壁炉",
+    "镜",
+    "灯",
+    "画",
+    "地毯",
+    "书",
+    "钢琴",
+    "酒",
+    "柜橱",
+    "梳妆"
+  ],
+  "门洞词": [
+    "门",
+    "大门",
+    "正门",
+    "前门",
+    "后门",
+    "侧门",
+    "front door",
+    "portal"
+  ],
+  "楼上词": [
+    "二楼",
+    "三楼",
+    "楼上",
+    "阁楼",
+    "upper",
+    "first floor",
+    "second floor"
+  ],
+  "地下词": [
+    "地窖",
+    "酒窖",
+    "cellar",
+    "basement",
+    "dungeon"
+  ],
+  "楼梯词": [
+    "梯",
+    "楼梯",
+    "阶梯",
+    "stair",
+    "staircase"
+  ],
+  "分带次序": [
+    "门",
+    "厅",
+    "廊",
+    "室",
+    "房",
+    "厨",
+    "后",
+    "楼"
+  ],
+  "主厅词": [
+    "厅",
+    "堂",
+    "大厅",
+    "hall",
+    "salon",
+    "drawing"
+  ],
+  "厨房词": [
+    "厨",
+    "灶",
+    "pantry",
+    "kitchen",
+    "scullery"
+  ],
+  "强词": [
+    "壁炉",
+    "沙发",
+    "钢琴",
+    "宴会厅",
+    "书房",
+    "图书室",
+    "早餐厅",
+    "客厅",
+    "great hall",
+    "fireplace",
+    "parlour",
+    "parlor",
+    "foyer",
+    "balcony",
+    "drawing room",
+    "servants hall",
+    "nursery",
+    "morning room",
+    "study",
+    "dining room",
+    "billiard room",
+    "library",
+    "conservatory",
+    "cellar",
+    "nanny",
+    "butler",
+    "scullery",
+    "pantry",
+    "gallery"
+  ],
+  "弱词": [
+    "走廊",
+    "楼梯",
+    "卧室",
+    "更衣室",
+    "马厩"
+  ],
+  "反证": [
+    "天井",
+    "堂屋",
+    "厢房",
+    "影壁",
+    "灶间",
+    "八仙桌"
+  ],
+  "聚落等级": {
+    "4": "都城 / 城堡",
+    "3": "要塞 / 庄园",
+    "2": "镇 / 村落",
+    "1": "小聚落"
+  },
+  "需查": [
+    "这种时期的宅邸主厅与翼楼的相对位置",
+    "仆役区（厨房/储藏）与前厅的连接方式",
+    "楼层数与卧室分布"
+  ]
+}

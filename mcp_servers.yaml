@@ -1,0 +1,113 @@
+# ══════════════════════════════════════════════════════════════════════════════
+# MCP 服务配置（设计稿 §8.6）
+#
+# 考据通道的**第 4 层提供者**：本地缓存 → 资料库 → 技能 → 【MCP】 → 联网兜底。
+# 配置文件路径由 .env 的 MCP_CONFIG 指定（默认 .\mcp_servers.yaml）。
+#
+# ── 格式 ──────────────────────────────────────────────────────────────────────
+#   mcpServers:
+#     <服务名>:
+#       command: 可执行文件（一般为 python）
+#       args:    参数列表
+#       enabled: true / false      ← 默认关的纪律：外部服务一律先关，用户自行开
+#       timeout: 单次调用超时（秒）
+#       用途:     给人看的一句话说明（也用于日志与文档）
+#
+# ── 可用的占位符（启动时自动替换，别写死路径）──────────────────────────────────
+#   {python}        当前虚拟环境的 python（跨平台，自动区分 Scripts/bin）
+#   {app_dir}       程序根目录
+#   {project_dir}   当前小说项目文件夹（未开项目时为空字符串）
+#   {env:NAME}      取环境变量 NAME
+#
+# ── 纪律（重要）───────────────────────────────────────────────────────────────
+# 走 MCP 的查询**会把查询词发出本机**。所以：
+#   · 只发查询词，绝不把小说全文塞进参数
+#   · 外部服务器默认 enabled: false，与「联网搜索兜底」同一套「默认关 + 二次确认」
+#   · 本地服务器（读项目文件夹的）不出机，可以默认开
+# ══════════════════════════════════════════════════════════════════════════════
+
+mcpServers:
+
+  # ── 本地：项目设定集考据（不出机，默认开）────────────────────────────────────
+  项目考据:
+    command: "{python}"
+    args:
+      - "mcp/servers/project_lore_server.py"
+      - "--project-dir"
+      - "{project_dir}"
+    enabled: true
+    timeout: 20
+    用途: "读设定集：人物卡、伏笔、世界观、故事进度、全文检索"
+
+  # ── 本地：已发生故事线考据（不出机，默认开）──────────────────────────────────
+  故事线:
+    command: "{python}"
+    args:
+      - "mcp/servers/timeline_server.py"
+      - "--project-dir"
+      - "{project_dir}"
+    enabled: true
+    timeout: 20
+    用途: "读运行文件夹：每天的生活、关键事件卡、前情提要、全文检索"
+
+  # ── 本地：十二时辰换算（纯计算，不出机，默认开）──────────────────────────────
+  虚拟时钟:
+    command: "{python}"
+    args:
+      - "mcp/servers/clock_server.py"
+    enabled: true
+    timeout: 10
+    用途: "十二时辰换算、跨日进位、按 TIME_RATIO 估算真实耗时"
+
+  # ══════════════════════════════════════════════════════════════════════════
+  #  以下为**模板**：默认关闭，需要时把 enabled 改成 true。
+  #  它们都要联网，属"查询内容出机"，请先读上面的纪律。
+  # ══════════════════════════════════════════════════════════════════════════
+
+  # 网页抓取（需 npx / Node.js）
+  # 典型用途：查到一个百科页面后抓正文，比搜索引擎摘要更完整。
+  fetch:
+    command: "npx"
+    args: ["-y", "@modelcontextprotocol/server-fetch"]
+    enabled: false
+    timeout: 30
+    用途: "抓取指定 URL 的网页正文（联网，出机）"
+
+  # DuckDuckGo 搜索（需 npx / Node.js，免 API Key）
+  # 典型用途：考据"宋代交子兑便"这类设定外知识。
+  duckduckgo-search:
+    command: "npx"
+    args: ["-y", "duckduckgo-mcp-server"]
+    enabled: false
+    timeout: 30
+    用途: "关键词搜索（联网，出机）"
+
+  # Wikipedia（需 npx / Node.js）
+  # 典型用途：查历史人物、地名、典章制度的背景。
+  wikipedia:
+    command: "npx"
+    args: ["-y", "@modelcontextprotocol/server-wikipedia"]
+    enabled: false
+    timeout: 30
+    用途: "维基百科条目查询（联网，出机）"
+
+  # 时间服务（需 uv / Python）
+  # 注意：本项目已自带「虚拟时钟」服务器（十二时辰换算），
+  # 这一项留给需要**时区/日历**的场景，一般用不上。
+  time:
+    command: "uvx"
+    args: ["mcp-server-time"]
+    enabled: false
+    timeout: 10
+    用途: "时区与日历换算（联网可选，出机）"
+
+  # ── 自定义示例：把本地「资料库」目录挂成一个搜索服务 ──────────────────────────
+  # 想加自己的服务器？照抄下面这段，把 args 指向你的脚本即可。
+  # 写服务器的方法见 mcp/README.md（约 20 行就能起一个）。
+  #
+  # 我的考据源:
+  #   command: "{python}"
+  #   args: ["D:/my_scripts/my_lore_server.py", "--root", "E:/参考资料"]
+  #   enabled: false
+  #   timeout: 20
+  #   用途: "自建：查我的参考资料目录"

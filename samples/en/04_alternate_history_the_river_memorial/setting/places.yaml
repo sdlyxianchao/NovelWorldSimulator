@@ -1,0 +1,31 @@
+# The few places this story happens in (3~5 is enough)
+#
+# 说明 should stay short and *usable* (what is inside, when it is busy) —
+# the program reads it to judge what kind of guests and events fit here.
+#
+# 方位 / 内里 are the two **optional** fields:
+#   · 方位 = where it sits, what it is next to (for the overview map)
+#   · 内里 = the rooms / courtyards / objects inside (for the indoor map)
+# Leave them out and it still runs.
+#
+# Field names stay in Chinese: the program reads the same set of keys for
+# both the Chinese and the English edition of a story.
+
+- 名称: West Levee
+  说明: The main flood levee; its third stretch is wrong
+  方位: West of the county town, against the river
+  内里: [third stretch, gauge post, straw shed]
+
+- 名称: The Great River
+  说明: The northern river; floods in three years, ten
+  方位: Along the north of the county, levee on its bank
+
+- 名称: County Office
+  说明: The county yamen, two courts, back hall for business
+  方位: Center of the county town
+  内里: [main hall, back hall, archive room, runners' room]
+
+- 名称: Archive Room
+  说明: Two low rooms holding the yearly river memorials
+  方位: Back court of the east wing, county office
+  内里: [wooden racks, ladder, desk, old memorials]

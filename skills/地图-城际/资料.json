@@ -1,0 +1,21 @@
+{
+  "来源": [
+    "image_gen/scalemap.py::build_region_shapes",
+    "image_gen/scalemap.py::settlement_rank",
+    "image_gen/scalemap.py::PORT_WORDS",
+    "image_gen/worldstyle.py::rank_table"
+  ],
+  "五样": [
+    "政区面(虚线界)",
+    "水系",
+    "山地三角",
+    "官道(分级双线)",
+    "城镇节点(四级)"
+  ],
+  "等级判法": [
+    "档案词表",
+    "通用并集表",
+    "作者size",
+    "1(不抬等级)"
+  ]
+}

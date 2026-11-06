@@ -1,0 +1,18 @@
+{
+  "来源": [
+    "image_gen/roomplan.py::solve",
+    "image_gen/roomplan.py::shared_wall",
+    "image_gen/floorplan.py::_draw_plan",
+    "image_gen/furniture.py::WALL_IN"
+  ],
+  "墙厚向内px": 4.35,
+  "门": {
+    "形式": "缺口 + 门扇线",
+    "缺口宽px": 18,
+    "不要": "开合弧"
+  },
+  "不画": [
+    "室外的路",
+    "街道网"
+  ]
+}

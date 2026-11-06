@@ -1,0 +1,24 @@
+{
+  "来源": [
+    "image_gen/scalemap.py::water_kind",
+    "image_gen/scalemap.py::sea_polygon",
+    "image_gen/scalemap.py::coast_line",
+    "image_gen/scalemap.py::draw_water",
+    "image_gen/scalemap.py::WK_LABEL",
+    "image_gen/scale.py::layout_extra"
+  ],
+  "三态": {
+    "river": "河道中线 → 带",
+    "lake": "闭合岸线 → 填充",
+    "coast": "陆海分界 → 一侧整片水 + 实线海岸线"
+  },
+  "海岸判据": [
+    "横跨≥55%",
+    "一侧地点≤16%",
+    "旁证：海味地名 或 坐标超出0~1"
+  ],
+  "不编造": [
+    "不画等深线",
+    "不画沙滩与礁石"
+  ]
+}
