@@ -96,6 +96,7 @@ cd <工程根目录>          # 就是含 config.py / gui / sim 的那一层
 | `-Gitee` | **同时**推 Gitee（GitHub 也会推） |
 | `-GiteeOnly` | **只**推 Gitee |
 | `-GiteeToken` / `-GiteeUser` | 直接给 Gitee 令牌（不给则用已保存凭据 / 弹框） |
+| `-ResetGiteeCred` | 丢掉本机保存的 Gitee 凭据，本次重新询问（令牌输错时用） |
 | `-Version` | tag 名，如 `v0.3.4`。**留空则不打 tag、不建 Release**（只推代码）。带不带 `v` 都行（`0.3.4` 的 tag 就是 `0.3.4`）；与 `config.VERSION` 不一致**只警告、不拦**（版本号只由你定） |
 | `-ReleaseNotes` | tag 正文 + Release 说明 |
 | `-CommitMessage` | 提交信息，默认 `update: sync latest source`。两边各用同一句；工作区**无变更时不提交**（不会造空 commit） |
@@ -190,7 +191,8 @@ README 里写着"双击这个"，排掉它们等于让人双击一个不存在�
 1. **GitHub PAT**：[Settings → Developer settings → Tokens](https://github.com/settings/tokens)，勾 `repo`。
    Gitee 令牌勾 `projects` 读写。
 2. **仓库可以不用手建** —— 脚本会建（见上文）。要自己建的话：空仓库，**别勾"初始化 README"**。
-3. Gitee 凭据第一次运行会弹两个输入框，之后加密存在本机（`.gitee-cred.enc`），换机器要重输。
+3. Gitee 凭据第一次运行会弹两个输入框，之后加密存在本机（`.gitee-cred.enc` + `.gitee-user.txt`），换机器要重输。
+   **存了之后就不再弹框** —— 输错了加 `-ResetGiteeCred` 重跑（见第五节最后一条）。
 
 ---
 
@@ -202,7 +204,9 @@ README 里写着"双击这个"，排掉它们等于让人双击一个不存在�
 | `GitHub 仓库不存在` + `自动建仓需要 GitHub PAT` | 没给 `-Token`，不能建仓。补上，或先手动建 |
 | 建 Gitee 仓库 403 | 令牌没勾 `projects` 读写 |
 | `push 被拒（历史不一致）` | 脚本自动 `force-with-lease` 重试；仍失败说明远端有新提交，先人工看一眼 |
-| Gitee `401/403` | 令牌过期。删 `.gitee-cred.enc` 后重跑，或加 `-GiteeToken` |
+| Gitee 仓库建失败 `401` | **令牌本身不对**（输错 / 过期 / 已删）。脚本会**自动作废**已存的凭据并提示 → 重跑重输；想跳过弹框用 `-GiteeUser sdxianchao -GiteeToken "<新令牌>"` |
+| Gitee 仓库建失败 `403` | **令牌有效，但没有建仓权限**。去勾 `projects` 读写 —— 重输令牌一百次也不会好，脚本**故意不清**凭据 |
+| 已存凭据要换掉（比如换账号） | `.\\publish.ps1 -Gitee -ResetGiteeCred`（等价于手删 `.gitee-cred.enc` + `.gitee-user.txt`） |
 | 扫到密钥中止 | 加进脚本的 `$XD` / `$XF` 排除清单，或把真 Key 从那个文件挪走 |
 | `README 换位失败` | 语言条被改过（脚本要求 `[English](README_EN.md)` 恰好出现 1 次）。按报错行号看一眼 |
 | `README 里有 N 个坏链` | 换位后链接指到不存在的文件。按列出来的路径补文件或改链接 |

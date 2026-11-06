@@ -153,6 +153,45 @@ def a_group() -> None:
        f'{len(shim_src.splitlines())} 行；混进了实现：{leaked}' if leaked
        else f'{len(shim_src.splitlines())} 行，只转发')
 
+    # ★ Gitee 凭据的逃生门（2026-11-06 用户实测撞上：令牌输错一次就永远用错的）
+    #   存了凭据就不再弹框 ⇒ 错的令牌会被一直沿用，界面上却只说"建仓失败"，
+    #   用户唯一能做的就是手删文件。两件事必须同时在：
+    #     ① 有主动重置的开关；② **只有 401 才清**凭据。
+    #   403 是"令牌有效但没权限"，清掉重输一百次也不会好 —— 把它并进 401 处理，
+    #   等于把用户推进死循环，而每一步看起来都很合理。
+    # [EN] The escape hatch for Gitee credentials. Once saved, the script never re-prompts, so a
+    # [EN] mistyped token is reused forever while the UI only says "failed to create repo".
+    # [EN] Two invariants: a reset switch exists, and **only 401** clears the stored token.
+    # [EN] 403 means "valid token, missing permission" -- clearing it sends the user in circles.
+    clear_calls = src.count('Clear-GiteeCred')
+    ok('A12 ★★★ 有"清掉已存凭据、重新询问"的开关（否则令牌输错一次就只能手删文件）',
+       'function Clear-GiteeCred' in src
+       and re.search(r'if \(\$ResetGiteeCred\)\s*\{[^}]*Clear-GiteeCred', src) is not None
+       and clear_calls >= 3,
+       f'Clear-GiteeCred 出现 {clear_calls} 次（要 1 处定义 + 至少 2 处调用）')
+
+    i401 = src.find('$code -eq 401')
+    i403 = src.find('$code -eq 403')
+    seg401 = src[i401:i403] if 0 <= i401 < i403 else ''
+    seg403 = ''
+    if i403 >= 0:
+        _k = src.find('} else {', i403)
+        seg403 = src[i403:(_k if _k > i403 else i403 + 800)]
+
+    a13_ok = bool(seg401.strip()) and 'Clear-GiteeCred' in seg401
+    ok('A13 ★★★ 401（令牌本身不对）要**作废已存凭据**并告诉用户重输，不能只报"建仓失败"',
+       a13_ok,
+       f'401 分支 {len(seg401)} 字，含 Clear-GiteeCred' if a13_ok
+       else ('401 分支里没有 Clear-GiteeCred' if seg401 else '找不到 401 分支'))
+
+    a14_bad = 'Clear-GiteeCred' in seg403
+    a14_ok = bool(seg403.strip()) and not a14_bad and 'projects' in seg403
+    ok('A14 ★★★ 403（令牌对、权限不够）**不许**清凭据，要指明去勾 projects 读写',
+       a14_ok,
+       f'403 分支 {len(seg403)} 字，只提 projects、未清凭据' if a14_ok
+       else ('403 分支清掉了凭据（重输一百次也没用）' if a14_bad
+             else ('403 分支没提 projects' if seg403 else '找不到 403 分支')))
+
 
 # ============================================================
 #  B 组：README 换位（真跑）

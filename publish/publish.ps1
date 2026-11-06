@@ -11,6 +11,7 @@
 #    .\publish\publish.ps1 -DryRun                                     # 只打印计划，不碰 git、不联网
 #    .\publish\publish.ps1 -NoPush                                     # 生成两套工作区并本地提交，不推远端
 #    .\publish\publish.ps1 -Gitee -NoProxy                             # 代理没起时直连
+#    .\publish\publish.ps1 -Gitee -ResetGiteeCred                      # 令牌输错了 → 丢掉重问
 #    .\publish\publish.ps1 -Gitee -Version "v0.3.4" -ReleaseNotes "…"  # 打 tag 并建 Release
 #    .\publish\publish.ps1 -Gitee -UploadAsset                         # 顺带把发布包挂到 Release 附件
 #
@@ -58,6 +59,7 @@ param(
     [switch]$GiteeOnly,                                   # 只推 Gitee
     [string]$GiteeToken = "",                             # Gitee 私人令牌；留空则用已保存凭据 / 弹框
     [string]$GiteeUser = "",                              # Gitee 用户名；留空则用已保存的
+    [switch]$ResetGiteeCred,                              # 丢掉已保存的 Gitee 凭据，重新询问
     [string]$Version = "",                                # 如 v0.3.4；留空则不打 tag
     [string]$ReleaseNotes = "",
     [string]$Branch = "main",
@@ -131,6 +133,27 @@ function Get-GiteeCred {
         [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
         return @{ username = (Get-Content -LiteralPath $GiteeUserFile -Raw).Trim(); token = $tk }
     } catch { return $null }
+}
+
+#: 清掉本机保存的 Gitee 凭据（两个文件：加密令牌 + 用户名）。
+#: 存在的意义：**存了凭据就不再弹框**，所以令牌输错一次会被一直沿用，
+#: 而界面上只会说「建仓失败」—— 用户除了手删文件没有别的路。
+#: [EN] Drop the saved Gitee credentials (encrypted token + username). Once saved, the script
+#: never prompts again, so a mistyped token gets reused forever while the UI only says
+#: "failed to create repo" -- without this the user has no way out but deleting files by hand.
+function Clear-GiteeCred {
+    $n = 0
+    foreach ($f in @($GiteeEncFile, $GiteeUserFile)) {
+        if (Test-Path -LiteralPath $f) {
+            Remove-Item -LiteralPath $f -Force -ErrorAction SilentlyContinue
+            if (-not (Test-Path -LiteralPath $f)) { $n++ }
+        }
+    }
+    if ($n -gt 0) {
+        Write-Warn2 "已清除本机保存的 Gitee 凭据（$n 个文件）"
+    } else {
+        Write-Gray "本机没有保存的 Gitee 凭据，无需清除"
+    }
 }
 
 function Save-GiteeCred($user, $token) {
@@ -790,6 +813,9 @@ if ($DryRun) {
         Write-Host "      工作区：$GiteeRepoDir" -ForegroundColor Gray
         Write-Host "      README.md = 中文（原样），英文 → README.en.md" -ForegroundColor Gray
     }
+    if ($ResetGiteeCred) {
+        Write-Host "  · Gitee 凭据：先删掉本机保存的，再重新询问（-ResetGiteeCred）" -ForegroundColor Yellow
+    }
     if ($NoCreate) {
         Write-Host "  1) 远端检查；不存在则**报错跳过**（-NoCreate）" -ForegroundColor Gray
     } else {
@@ -845,6 +871,11 @@ $giSlug = Get-Slug $GiteeRepoUrl
 $ghExists = $false
 $giExists = $false
 $gCred = $null
+
+if ($ResetGiteeCred) {
+    Write-Step "Phase 0.1: 重置 Gitee 凭据（-ResetGiteeCred）"
+    Clear-GiteeCred
+}
 
 if (-not $NoPush) {
     Write-Step "Phase 0: 远端仓库检查"
@@ -931,8 +962,25 @@ if (-not $NoPush) {
                 New-GiteeRepo $giSlug $gCred.token $d
                 $giExists = $true
             } catch {
-                Write-Err2 "建 Gitee 仓库失败：$($_.Exception.Message)"
-                Write-Gray "常见原因：令牌没有 projects 读写权限 / 名字被占用 / 额度已满"
+                $em = "$($_.Exception.Message)"
+                # ★ 401 与 403 必须分开：401 是"令牌本身不对"（重输才有用），
+                #   403 是"令牌对但没权限"（重输一百次也没用，要去勾 projects）。
+                #   曾经两者都说成"建仓失败"，用户唯一能做的就是反复重输。
+                $code = 0
+                try { if ($_.Exception.Response) { $code = [int]$_.Exception.Response.StatusCode } } catch { }
+                Write-Err2 "建 Gitee 仓库失败：$em"
+                if ($code -eq 401 -or $em -match '\(401\)|Unauthorized') {
+                    Write-Warn2 "401 = 令牌被拒（输错 / 过期 / 已被删除），不是权限问题。"
+                    Clear-GiteeCred
+                    Write-Gray "旧凭据已作废 ⇒ 重跑会重新问你。想跳过弹框就这样给："
+                    Write-Gray "  .\publish.ps1 -Gitee -GiteeUser $($gCred.username) -GiteeToken `"<新令牌>`""
+                } elseif ($code -eq 403 -or $em -match '\(403\)|Forbidden') {
+                    Write-Warn2 "403 = 令牌有效，但没有建仓权限。去勾 projects 读写权限，**别重输令牌**。"
+                    Write-Gray "  https://gitee.com/profile/personal_access_tokens"
+                } else {
+                    Write-Gray "常见原因：令牌没有 projects 读写权限 / 名字被占用 / 额度已满 / 代理没起。"
+                    Write-Gray "若怀疑令牌输错：.\publish.ps1 -Gitee -ResetGiteeCred"
+                }
                 $doGitee = $false
             }
         }
