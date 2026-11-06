@@ -226,6 +226,40 @@ Warn-TokenShape 'Gitee' $GiteeToken
 #: 归到这里就会把人指去"换 IP、重输令牌"，而那两件事一点用都没有。
 $NetFailRe = 'Could not connect|Failed to connect|unable to access|Connection refused|Connection was reset|Recv failure|timed out|SSL_|schannel|Empty reply from server'
 
+#: "凭据被拒"这一类错误的字样。**全脚本只此一份**：push 失败分类、令牌兜底重试
+#: 都要判"是不是认证问题"，两处各写一份正则迟早漂移（2026-11-06 就漂过：
+#: 一边有 'Invalid username' 一边没有）。
+$AuthFailRe = 'Authentication failed|authentication|Permission denied|403|401|Invalid username'
+
+#: ★★★ 2026-11-06 实测（用户：Gitee 成功、GitHub 的 force push 报
+#:   `fatal: Authentication failed`，而**普通 push 那一步拿到的是真被拒 [rejected]**）：
+#:   一个"能读不能写"的令牌（经典 PAT 没勾 repo / 细粒度只给 Contents:Read）恰好长这样——
+#:   公开仓库的引用广告它读得到（第 1 次 push 能走到 [rejected]），force POST 写入时才被拒。
+#:   而 Windows 凭据管理器（git credential manager）里存过的 GitHub 凭据是**能写的**
+#:   （实测推小分支 rc=0）。⇒ 令牌被拒时，自动换凭据管理器里的凭据再推一次；
+#:   tag 推送跟同一个决定（`$script:GhAuthByHelper`），别让 tag 再撞一次墙。
+# [EN] A read-only token passes the ref advertisement (so push #1 gets a genuine
+# [EN] [rejected]) but fails the write POST -- looks like "auth worked then broke".
+# [EN] Fall back to the credential-manager credential, which can write. Tag push
+# [EN] follows the same decision via $script:GhAuthByHelper.
+$script:GhAuthByHelper = $false
+
+#: 凭据管理器里有没有存过 GitHub 凭据（cmdkey 只列名字、不读内容）。
+#: 兜底重推**必须有这道闸**：没有存过凭据时走 git credential helper，
+#: GCM 会弹 GUI / 浏览器登录 —— 无人值守跑（判据 / 定时任务）会一直挂着。
+function Test-GcmGithubCred {
+    # 临时放回 Continue：cmdkey 是原生命令，PS 5.1 里 stderr 会变 ErrorRecord
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $out = @(cmdkey /list 2>&1)
+        $t = ($out | ForEach-Object { "$_" }) -join "`n"
+        return ($t -match 'git:https://github\.com')
+    } finally {
+        $ErrorActionPreference = $prevEap
+    }
+}
+
 # ★★★ 2026-11-06 实测：这台机器 `hosts` 里写着 `20.27.177.113 github.com`，
 #   上午还能用、晚上就 `Recv failure: Connection was reset`；换 `140.82.116.3` 10 秒就通。
 #   ⇒ **不存在"实测可用"的常量 IP**，只有"现试"。下面这份是候选池，不是真理：
@@ -749,8 +783,11 @@ function Hide-Secret([string]$text, [string]$secret) {
 #: 一次 push 尝试（内含"**只有真被拒**才 force"的第二次尝试）。返回 @{ ok; msg }。
 #: 抽成函数是因为"换一个 IP 再推一次"要用同一套逻辑 —— **同一件事不许两处实现**，
 #: 否则 force 的判据迟早只长在一条路上。
-function Invoke-Push([string]$authed, [string[]]$extra, [string]$tk) {
-    $cred = @('-c', 'credential.helper=')
+#: -NoCredClear：**不**清空 credential helper —— 让凭据管理器（GCM）有机会供凭据。
+#:   默认清空是隔离（只用 URL 里那个令牌）；兜底重推时要的就是"让 GCM 说话"。
+function Invoke-Push([string]$authed, [string[]]$extra, [string]$tk, [switch]$NoCredClear) {
+    $cred = @()
+    if (-not $NoCredClear) { $cred = @('-c', 'credential.helper=') }
     $r = Invoke-GitText ($GitArgs + @($extra) + $cred + @('push', $authed, "HEAD:refs/heads/$Branch"))
     $msg = Hide-Secret $r.text $tk
 
@@ -834,6 +871,21 @@ function Push-Tree([string]$dir, [string]$url, [string]$tk, [string]$user, [stri
             }
         }
 
+        # ── 令牌能读不能写：换凭据管理器（GCM）里存的凭据再推一次 ──────────
+        #   症状很迷惑（2026-11-06 实测）：第 1 次 push 拿到的是**真的** [rejected]
+        #   （公开仓库的引用广告它读得到），force POST 写入时才 `Authentication failed`，
+        #   看起来像"认证成功过又坏了"。其实令牌从头就没有写权限。
+        #   必须先过 Test-GcmGithubCred 这道闸：没有存过凭据时走 helper 会弹
+        #   GUI / 浏览器登录，无人值守跑就挂在那里。
+        if (-not $r.ok -and $kind -eq 'github' -and $r.msg -match $AuthFailRe -and (Test-GcmGithubCred)) {
+            Write-Warn2 "令牌被 GitHub 拒了（多半能读不能写），改用凭据管理器里存的凭据再推一次……"
+            $r = Invoke-Push $url @() $tk -NoCredClear
+            if ($r.ok) {
+                $script:GhAuthByHelper = $true
+                Write-Ok "凭据管理器的凭据可用（令牌侧建议仍去检查 scope：经典 PAT 勾 repo）"
+            }
+        }
+
         $msg = $r.msg
         if ($r.ok) {
             Write-Ok "$label push 成功（$Branch）"
@@ -858,10 +910,12 @@ function Push-Tree([string]$dir, [string]$url, [string]$tk, [string]$user, [stri
                 Write-Gray "  · 本脚本已按直连跑（会覆盖 git 全局里残留的代理配置）；"
                 Write-Gray "  · 确实要走代理：-Proxy http://127.0.0.1:端口"
             }
-        } elseif ($msg -match 'Authentication failed|authentication|Permission denied|403|401|Invalid username') {
+        } elseif ($msg -match $AuthFailRe) {
             Write-Warn2 "↑ 这是**凭据被拒**。"
             if ($kind -eq 'github') {
                 Write-Gray "  · token 要有 repo 写权限：https://github.com/settings/tokens"
+                Write-Gray "    经典 PAT 勾 repo；细粒度 PAT 勾 Contents 的 Read and write"
+                Write-Gray "  · 本机凭据管理器里没有可用的 GitHub 凭据，才走到这里（有就会自动换它重推）"
             } else {
                 Write-Gray "  · 令牌要勾 projects 读写，且必须是**私人令牌**（不是登录密码）"
                 Write-Gray "  · 换过令牌：加 -ResetGiteeCred 重跑，或 -GiteeToken `"<新令牌>`""
@@ -901,7 +955,17 @@ function Push-Tag([string]$dir, [string]$url, [string]$tk, [string]$user, [strin
             else { Write-Err2 "$label tag '$tag' 已存在且指向别的提交 —— 换一个 tag，或先删旧 tag" }
         }
         if ($ready) {
-            $traw = @(git @GitArgs -c credential.helper= push $authed $tag 2>&1)
+            # ★ 令牌被拒、push 已换凭据管理器成功的 ⇒ tag 跟同一个决定，
+            #   别让 tag 再拿那个能读不能写的令牌去撞一遍墙（撞完 Release 还建不出来）。
+            #   决定只在 Push-Tree 兜底那一处做（$script:GhAuthByHelper），这里只消费。
+            $tagUrl = $authed
+            $tagCred = @('-c', 'credential.helper=')
+            if ($script:GhAuthByHelper -and $kind -eq 'github') {
+                $tagUrl = $url
+                $tagCred = @()
+                Write-Gray "tag 也走凭据管理器（令牌已证明不能写）"
+            }
+            $traw = @(git @GitArgs @tagCred push $tagUrl $tag 2>&1)
             if ($LASTEXITCODE -eq 0) {
                 Write-Ok "$label tag 已推：$tag"
             } else {

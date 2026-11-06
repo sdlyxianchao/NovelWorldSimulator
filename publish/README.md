@@ -211,6 +211,7 @@ README 里写着"双击这个"，排掉它们等于让人双击一个不存在�
 | `URL rejected: Bad hostname`（Gitee） | **令牌里含 `@` 等特殊字符**（多半输的是登录密码，不是私人令牌）—— 拼进 URL 后 curl 解析不了。脚本现在会自动转义并提前告警；正确做法是去 https://gitee.com/profile/personal_access_tokens 生成 32 位十六进制的私人令牌（勾 projects 读写），`-ResetGiteeCred` 重输 |
 | `error: cannot parse expected object name 'System.Collections.Hashtable'` | 旧版 bug（force 重试时取远端 tip 的写法错误）。已修：tip 先验是 SHA 再喂给 `--force-with-lease`，拿不到就退普通 `--force` |
 | `push 被拒（历史不一致）` | 脚本自动 `force-with-lease` 重试；仍失败说明远端有新提交，先人工看一眼 |
+| GitHub 普通 push 看似过了、force 那步报 `fatal: Authentication failed` | **令牌能读不能写**（经典 PAT 没勾 `repo` / 细粒度只给了 Contents:Read）。公开仓库的引用广告它能读，所以第一步能拿到"历史不一致"，真正写入时才被拒——看起来像"认证成功过又坏了"，别被骗。现在脚本会**自动改用 Windows 凭据管理器（GCM）里存的 GitHub 凭据**重推（前提是存过；tag 跟同一个决定）。根治：https://github.com/settings/tokens 重新生成（勾 `repo`） |
 | Gitee 仓库建失败 `401` | **令牌本身不对**（输错 / 过期 / 已删）。脚本会**自动作废**已存的凭据并提示 → 重跑重输；想跳过弹框用 `-GiteeUser sdxianchao -GiteeToken "<新令牌>"` |
 | Gitee 仓库建失败 `403` | **令牌有效，但没有建仓权限**。去勾 `projects` 读写 —— 重输令牌一百次也不会好，脚本**故意不清**凭据 |
 | 已存凭据要换掉（比如换账号） | `.\\publish.ps1 -Gitee -ResetGiteeCred`（等价于手删 `.gitee-cred.enc` + `.gitee-user.txt`） |

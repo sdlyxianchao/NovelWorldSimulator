@@ -282,6 +282,37 @@ def a_group() -> None:
        a19_ok,
        '有 ^[0-9a-f]{7,64}$ 防呆' if a19_ok else "tip 没做 SHA 校验")
 
+    # ★★★ "能读不能写"的令牌症状极迷惑（2026-11-06 实测）：第 1 次 push 拿到
+    #   真的 [rejected]（公开仓库的引用广告能读），force 写入才 401 —— 看起来像
+    #   "认证成功过又坏了"。修复 = 令牌被拒时换凭据管理器（GCM）里存的凭据重推。
+    #   三个要点都要在：① 兜底重推存在；② 有 Test-GcmGithubCred 这道闸（没有存过
+    #   凭据时走 helper 会弹 GUI，无人值守跑会挂死）；③ 判"凭据被拒"用 $AuthFailRe
+    #   （与失败分类同一份正则，不许两处实现）。
+    a20_ok = ('$r = Invoke-Push $url @() $tk -NoCredClear' in src
+              and 'Test-GcmGithubCred' in src
+              and "$r.msg -match $AuthFailRe" in src
+              and "$AuthFailRe = 'Authentication failed" in src
+              and src.count("$msg -match $AuthFailRe") >= 1)
+    ok('A20 ★★★ GitHub 令牌被拒时换凭据管理器重推，且有"没存过凭据不弹窗"的闸',
+       a20_ok,
+       '兜底重推 + cmdkey 闸 + $AuthFailRe 单一正则' if a20_ok
+       else ('兜底重推缺 cmdkey 闸（无人值守会挂死）' if 'Test-GcmGithubCred' not in src
+             else ('没有兜底重推' if '$r = Invoke-Push $url @() $tk -NoCredClear' not in src
+                   else '凭据被拒的正则又两处实现了')))
+
+    # ★★★ 兜底成功的决定只许在 Push-Tree 一处做（$script:GhAuthByHelper），
+    #   Push-Tag 只消费 —— tag 拿同一个能读不能写的令牌再撞一遍墙，是同一类
+    #   "修了 push 忘了 tag" 的半修（IP 钉死那次就栽过：push 用新 IP、tag 撞旧的）。
+    a21_ok = ('$script:GhAuthByHelper = $true' in src
+              and src.count('$script:GhAuthByHelper = $true') == 1
+              and 'if ($script:GhAuthByHelper -and $kind -eq ' + "'github')" in src
+              and '$tagUrl = $url' in src)
+    ok('A21 ★★★ tag 推送跟随令牌兜底的同一个决定（决定一处做、一处消费）',
+       a21_ok,
+       'Push-Tag 消费 $script:GhAuthByHelper' if a21_ok
+       else ('Push-Tag 没跟随兜底决定（tag 会再撞一次墙）' if 'tagUrl = $url' not in src
+             else '兜底决定不是单一赋值点'))
+
 
 # ============================================================
 #  B 组：README 换位（真跑）
