@@ -255,6 +255,33 @@ def a_group() -> None:
              else (f'还对用户说某个 IP 实测可用：{blessed_ip[:1]}' if blessed_ip
                    else '失败后没真正重试（或被函数作用域吞掉）')))
 
+    # ★★★ 凭据进 URL 必须先**转义**（2026-11-06 深夜用户实测：
+    #   Gitee 令牌里带 `@` ⇒ curl 把令牌尾巴当主机名 ⇒
+    #   `URL rejected: Bad hostname`，长得像"网络不通"，其实是本地拼 URL 失败）。
+    #   且装配只许有一处（`Get-AuthedUrl`）—— 上一版 Push-Tree / Push-Tag 各拼各的，
+    #   这正是"同一件事两处实现"的老病。
+    # [EN] Credentials must be URL-escaped before being embedded, and by exactly one helper:
+    # [EN] one `@` in a token made curl report "Bad hostname" (looks like a network outage).
+    a18_ok = ('function Get-AuthedUrl' in src
+              and '$k = [System.Uri]::EscapeDataString("$tk")' in src
+              and "$u = [System.Uri]::EscapeDataString(\"$user\")" in src
+              and ":$tk@" not in src
+              and src.count('Get-AuthedUrl ') >= 2)
+    ok('A18 ★★★ 令牌进 URL 前**转义**、且只有 `Get-AuthedUrl` 一个装配点',
+       a18_ok,
+       f'装配点 {src.count("Get-AuthedUrl ")} 处，user/token 都转义' if a18_ok
+       else ('还有裸拼 `:$tk@` 的地方' if ":$tk@" in src
+             else 'token / user 没有双双走 EscapeDataString，或没都走 Get-AuthedUrl'))
+
+    # ★★★ force-with-lease 的 tip 必须先验是 SHA：上一版把 hashtable 字符串化
+    #   成 'System.Collections.Hashtable' 直接喂给了 git（报 cannot parse expected
+    #   object name）。拿不到合法 tip 就退普通 --force，绝不把错误文本当对象名。
+    # [EN] The tip fed to --force-with-lease must look like a SHA, never stringified junk.
+    a19_ok = ("$tip -match '^[0-9a-f]{7,64}$'" in src)
+    ok('A19 ★★★ `--force-with-lease` 的 tip 先验 SHA（防把错误文本当对象名喂给 git）',
+       a19_ok,
+       '有 ^[0-9a-f]{7,64}$ 防呆' if a19_ok else "tip 没做 SHA 校验")
+
 
 # ============================================================
 #  B 组：README 换位（真跑）

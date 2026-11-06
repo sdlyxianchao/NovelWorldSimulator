@@ -205,6 +205,22 @@ if ($effSsl -ne '') {
     }
 }
 
+# ★★★ 令牌形状告警（只警告、不拦截）：令牌里带 `@` / 空格 / 冒号的，
+#   几乎一定是**登录密码**（邮箱样式密码尤其常见）。它拼进 URL 会让 curl 报
+#   `URL rejected: Bad hostname`——那句话长得像"网络不通"，其实是本地拼 URL 就失败了。
+#   现在拼 URL 已经会转义（`Get-AuthedUrl`），但认证仍会被拒；在**入口**就提醒，
+#   别让人拿着密码空跑一轮。GitHub PAT 形如 ghp_xxx，Gitee 私人令牌是 32 位十六进制。
+# [EN] Warn (not block) when a token contains URL-hostile characters: it is almost certainly a
+# [EN] login password, not a PAT. It used to turn into "Bad hostname" (looks like a network issue).
+function Warn-TokenShape([string]$label, [string]$tk) {
+    if ($tk -eq '' -or $tk -match '^[A-Za-z0-9_\-]{16,}$') { return }
+    Write-Warn2 "$label 令牌里含特殊字符或长度不像令牌 —— 这多半是登录密码，认证大概率会被拒"
+    Write-Gray "  · GitHub PAT：https://github.com/settings/tokens（ghp_ 开头）"
+    Write-Gray "  · Gitee 私人令牌：https://gitee.com/profile/personal_access_tokens（32 位十六进制）"
+}
+Warn-TokenShape 'GitHub' $Token
+Warn-TokenShape 'Gitee' $GiteeToken
+
 #: "连不上"这一类错误的字样。**只放真·网络 / 握手失败**。
 #: `Unsupported SSL backend` 绝不能算进来 —— 那是本机配置错（上面已纠正），
 #: 归到这里就会把人指去"换 IP、重输令牌"，而那两件事一点用都没有。
@@ -746,11 +762,16 @@ function Invoke-Push([string]$authed, [string[]]$extra, [string]$tk) {
                   ($msg -match 'non-fast-forward|fetch first|\[rejected\]|updates were rejected')
     if ($realReject) {
         Write-Warn2 "远端有本机没有的提交，按远端 tip 强制覆盖"
-        $tipLine = @(Invoke-GitText ($GitArgs + @($extra) + $cred +
-                                     @('ls-remote', $authed, "refs/heads/$Branch")).text -split "`n") |
-                   Select-Object -First 1
-        $tip = ("$tipLine" -split '\s+')[0]
-        if ($tip) {
+        # ⚠ 先把返回值存进变量再取 .text：`Invoke-GitText (...).text -split "x"` 这种
+        #   一行到底的写法，命令模式会把 `.text` / `-split` 吃进参数表，函数照常返回
+        #   hashtable —— 一字符串化就是 'System.Collections.Hashtable'，
+        #   直接喂给 --force-with-lease（2026-11-06 实测就是这么红的）。
+        $lr = Invoke-GitText ($GitArgs + @($extra) + $cred +
+                              @('ls-remote', $authed, "refs/heads/$Branch"))
+        $tip = (((@($lr.text -split "`n") | Select-Object -First 1) -split '\s+')[0])
+        # 防呆：喂给 --force-with-lease 的必须是 SHA。拿不到合法 tip 就退回普通 --force，
+        # 也**绝不**把一句错误文本当对象名塞进 git。
+        if ($tip -and $tip -match '^[0-9a-f]{7,64}$') {
             $r = Invoke-GitText ($GitArgs + @($extra) + $cred +
                                  @('push', $authed, "HEAD:refs/heads/$Branch",
                                    "--force-with-lease=refs/heads/$Branch`:$tip"))
@@ -763,6 +784,25 @@ function Invoke-Push([string]$authed, [string[]]$extra, [string]$tk) {
     return @{ ok = ($r.rc -eq 0); msg = $msg }
 }
 
+#: 把凭据拼进 https URL。**唯一**的装配点（Push-Tree / Push-Tag 都走它）。
+#: ⚠ 令牌/用户名必须 `EscapeDataString` 之后才能进 URL：令牌里一个 `@` 就够让
+#:   curl 把"令牌的尾巴"当成主机名 —— git 只会回一句 `URL rejected: Bad hostname`，
+#:   看起来像"网络不通"，其实是本地拼 URL 就失败了（2026-11-06 实测复现：
+#:   `https://u:202402@yyy@gitee.com` ⇒ unable to access 'https://yyy@gitee.com/...' Bad hostname）。
+#:   顺带：含 `@` 的"令牌"多半是**登录密码**，不是私人令牌 —— 见上面的形状告警。
+#: ⚠ 不用 `-replace` 拼接：替换串里 `$` 有特殊含义（`$1`、`$&`），令牌里碰上就会被吞。
+# [EN] The single place that embeds credentials into an https URL. EscapeDataString first:
+# [EN] one `@` in the token makes curl treat part of it as the host ("Bad hostname", looks like
+# [EN] a network problem but is local URL assembly). No `-replace` here: `$` is special there.
+function Get-AuthedUrl([string]$url, [string]$user, [string]$tk) {
+    $u = [System.Uri]::EscapeDataString("$user")
+    $k = [System.Uri]::EscapeDataString("$tk")
+    if ($url.StartsWith('https://')) {
+        return 'https://' + $u + ':' + $k + '@' + $url.Substring(8)
+    }
+    return $url
+}
+
 function Push-Tree([string]$dir, [string]$url, [string]$tk, [string]$user, [string]$label, [string]$kind) {
     Write-Step "Phase 5: push → $label"
     $prevEap = $ErrorActionPreference
@@ -772,11 +812,8 @@ function Push-Tree([string]$dir, [string]$url, [string]$tk, [string]$user, [stri
         $hasOrigin = @(git remote 2>$null) -contains 'origin'
         if (-not $hasOrigin) { git remote add origin $url } else { git remote set-url origin $url }
 
-        if ($kind -eq 'github') {
-            $authed = $url -replace '^https://', "https://x-access-token:$tk@"
-        } else {
-            $authed = $url -replace '^https://', "https://${user}:$tk@"
-        }
+        $authUser = if ($kind -eq 'github') { 'x-access-token' } else { $user }
+        $authed = Get-AuthedUrl $url $authUser $tk
 
         $r = Invoke-Push $authed @() $tk
 
@@ -842,11 +879,8 @@ function Push-Tree([string]$dir, [string]$url, [string]$tk, [string]$user, [stri
 }
 
 function Push-Tag([string]$dir, [string]$url, [string]$tk, [string]$user, [string]$kind, [string]$label) {
-    if ($kind -eq 'github') {
-        $authed = $url -replace '^https://', "https://x-access-token:$tk@"
-    } else {
-        $authed = $url -replace '^https://', "https://${user}:$tk@"
-    }
+    $authUser = if ($kind -eq 'github') { 'x-access-token' } else { $user }
+    $authed = Get-AuthedUrl $url $authUser $tk
     $prevEap = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
     Push-Location $dir
@@ -1154,7 +1188,11 @@ if (-not $NoPush) {
                 Write-Warn2 "没有已保存的 Gitee 凭据，弹登录框……"
                 $gCred = Set-GiteeCred
             }
-            if ($gCred) { Write-Ok "Gitee 凭据：已保存的（用户 $($gCred.username)）" }
+            if ($gCred) {
+                Write-Ok "Gitee 凭据：已保存的（用户 $($gCred.username)）"
+                # 弹框输进来的令牌同样要过形状告警（跟 -GiteeToken / -Token 一个实现）
+                Warn-TokenShape 'Gitee' $gCred.token
+            }
         }
         if (-not $gCred) {
             Write-Err2 "没拿到 Gitee 凭据 ⇒ 跳过 Gitee（GitHub 侧不受影响）"

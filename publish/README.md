@@ -208,6 +208,8 @@ README 里写着"双击这个"，排掉它们等于让人双击一个不存在�
 | `Failed to connect to github.com:443` / `Recv failure: Connection was reset` | `hosts` 里那条 `github.com` 已经失效（**同一个 IP 隔一天就会烂**）。现在**不用管**：脚本会按候选池自己试一遍并重推；想跳过这 20 秒就加 `-GithubIp <能连的 IP>`（脚本发现能连时会把这一个直接告诉你） |
 | push 报 `Incorrect username or password (access token)` | Gitee 网络是通的，**令牌不对**（输错 / 用了登录密码 / 没勾 projects）。`-ResetGiteeCred` 重输 |
 | 建 Gitee 仓库 403 | 令牌没勾 `projects` 读写 |
+| `URL rejected: Bad hostname`（Gitee） | **令牌里含 `@` 等特殊字符**（多半输的是登录密码，不是私人令牌）—— 拼进 URL 后 curl 解析不了。脚本现在会自动转义并提前告警；正确做法是去 https://gitee.com/profile/personal_access_tokens 生成 32 位十六进制的私人令牌（勾 projects 读写），`-ResetGiteeCred` 重输 |
+| `error: cannot parse expected object name 'System.Collections.Hashtable'` | 旧版 bug（force 重试时取远端 tip 的写法错误）。已修：tip 先验是 SHA 再喂给 `--force-with-lease`，拿不到就退普通 `--force` |
 | `push 被拒（历史不一致）` | 脚本自动 `force-with-lease` 重试；仍失败说明远端有新提交，先人工看一眼 |
 | Gitee 仓库建失败 `401` | **令牌本身不对**（输错 / 过期 / 已删）。脚本会**自动作废**已存的凭据并提示 → 重跑重输；想跳过弹框用 `-GiteeUser sdxianchao -GiteeToken "<新令牌>"` |
 | Gitee 仓库建失败 `403` | **令牌有效，但没有建仓权限**。去勾 `projects` 读写 —— 重输令牌一百次也不会好，脚本**故意不清**凭据 |
